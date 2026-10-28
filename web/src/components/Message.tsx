@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { AlertCircle, AtSign, Clock, Copy, EyeOff, MessageSquare, MoreHorizontal, Pencil, Pin, PinOff, SmilePlus, Trash2 } from 'lucide-react'
+import { AlertCircle, Clock, Copy, EyeOff, MessageSquare, MoreHorizontal, Pencil, Pin, PinOff, SmilePlus, Trash2 } from '@/components/icons'
 import { useStore, type Msg, type Pending } from '@/lib/store'
 import { api } from '@/lib/api'
 import { fromSlackText, toSlackText } from '@/lib/compose'
@@ -11,7 +11,7 @@ import { Time } from './Time'
 import { Emoji } from './Emoji'
 import { EmojiPicker } from './EmojiPicker'
 import { Button } from './ui/button'
-import { Dropdown, MenuItem, MenuSep, Modal, Tip } from './ui/overlays'
+import { Dropdown, MenuIconItem, MenuItem, MenuSep, Modal, Tip } from './ui/overlays'
 
 const SYSTEM = /^(channel|group)_(join|leave|topic|purpose|name|archive|unarchive)$|^pinned_item$/
 
@@ -73,6 +73,7 @@ export const Message = memo(function Message({ m, grouped, channelId, inThread, 
   const retry = useStore((s) => s.retry)
   const discard = useStore((s) => s.discard)
   const editing = useStore((s) => s.editTs === m.ts)
+  const touchOpen = useStore((s) => s.touchActive === m.ts)
   const setStore = useStore((s) => s.set)
   const [confirm, setConfirm] = useState(false)
   const pending = (m as Pending).clientId ? (m as Pending) : null
@@ -106,12 +107,19 @@ export const Message = memo(function Message({ m, grouped, channelId, inThread, 
     }
   }
 
+  const QUICK = ['+1', 'heart', 'joy', 'white_check_mark', 'eyes']
   const toolbar = !pending && (
-    <div className="absolute -top-3 right-3 z-10 hidden items-center rounded-md border border-line-strong bg-surface p-0.5 group-focus-within/msg:flex group-hover/msg:flex" role="toolbar" aria-label="Message actions">
-      <EmojiPicker side="bottom" onPick={(n) => void toggleReaction(channelId, m.ts, n)} trigger={<Button variant="ghost" size="icon" aria-label="Add reaction"><SmilePlus className="size-4" aria-hidden /></Button>} />
-      {!inThread && <Tip label="Reply in thread"><Button variant="ghost" size="icon" aria-label="Reply in thread" onClick={() => void openThread(channelId, threadTs)}><MessageSquare className="size-4" aria-hidden /></Button></Tip>}
-      {mine && <Tip label="Edit message"><Button variant="ghost" size="icon" aria-label="Edit message" onClick={() => setStore({ editTs: m.ts })}><Pencil className="size-4" aria-hidden /></Button></Tip>}
-      <Dropdown trigger={<Button variant="ghost" size="icon" aria-label="More actions"><MoreHorizontal className="size-4" aria-hidden /></Button>}>
+    <div data-touch-open={touchOpen} className="absolute -top-3 right-3 z-10 hidden items-center rounded-md border border-line-strong bg-background p-0.5 group-focus-within/msg:flex group-hover/msg:flex data-[touch-open=true]:flex [@media(hover:none)]:group-hover/msg:hidden [@media(hover:none)]:data-[touch-open=true]:flex [@media(hover:none)]:-top-2" role="toolbar" aria-label="Message actions">
+      <EmojiPicker side="bottom" onPick={(n) => void toggleReaction(channelId, m.ts, n)} trigger={<Button variant="ghost" size="touch" aria-label="Add reaction"><SmilePlus className="size-4" aria-hidden /></Button>} />
+      {!inThread && <Tip label="Reply in thread"><Button variant="ghost" size="touch" className="[@media(hover:none)]:hidden" aria-label="Reply in thread" onClick={() => void openThread(channelId, threadTs)}><MessageSquare className="size-4" aria-hidden /></Button></Tip>}
+      {mine && <Tip label="Edit message"><Button variant="ghost" size="touch" className="[@media(hover:none)]:hidden" aria-label="Edit message" onClick={() => setStore({ editTs: m.ts })}><Pencil className="size-4" aria-hidden /></Button></Tip>}
+      <Dropdown trigger={<Button variant="ghost" size="touch" aria-label="More actions"><MoreHorizontal className="size-4" aria-hidden /></Button>}>
+        <div className="flex gap-0.5 px-0.5 pb-1" role="group" aria-label="Quick reactions">
+          {QUICK.map((n) => <MenuIconItem key={n} label={n.replace(/_/g, ' ')} onSelect={() => void toggleReaction(channelId, m.ts, n)}><Emoji name={n} /></MenuIconItem>)}
+        </div>
+        <MenuSep />
+        {!inThread && <MenuItem icon={<MessageSquare className="size-4" />} hint="T" onSelect={() => void openThread(channelId, threadTs)}>Reply in thread</MenuItem>}
+        {mine && <MenuItem icon={<Pencil className="size-4" />} hint="E" onSelect={() => setStore({ editTs: m.ts })}>Edit message</MenuItem>}
         <MenuItem icon={<Copy className="size-4" />} onSelect={() => void copyLink()}>Copy link</MenuItem>
         <MenuItem icon={<Copy className="size-4" />} onSelect={() => void navigator.clipboard?.writeText(fromSlackText(raw)).then(() => toast('Text copied'))}>Copy text</MenuItem>
         <MenuItem icon={<EyeOff className="size-4" />} onSelect={() => void markUnreadAt(channelId, m.ts)}>Mark unread from here</MenuItem>
@@ -135,13 +143,17 @@ export const Message = memo(function Message({ m, grouped, channelId, inThread, 
       data-ts={m.ts}
       tabIndex={0}
       onKeyDown={onKeyDown}
+      onClick={(e) => {
+        // phones have no hover: a tap on the message body toggles its action bar
+        if (!window.matchMedia('(hover: none)').matches || (e.target as HTMLElement).closest('a,button,input,textarea,[role=menuitem]')) return
+        setStore({ touchActive: touchOpen ? null : m.ts })
+      }}
       aria-label={`${mine ? 'Your message' : `Message from ${name}`}${pending ? (pending.state === 'failed' ? ', failed to send' : ', sending') : ''}`}
       aria-current={focused ? 'location' : undefined}
       className={cn(
         'group/msg focus-inset relative flex gap-3 border-l-2 px-4 py-[3px] hover:bg-hover focus-within:bg-hover',
         grouped ? 'pt-0' : 'mt-2.5 pt-1',
         mine ? 'border-l-ink-3' : 'border-l-transparent',
-        mentionsMe && 'border-l-warn bg-warn/[0.06]',
         pending?.state === 'failed' && 'border-l-danger-fill bg-danger-fill/[0.07]',
         pending?.state === 'sending' && 'opacity-60',
         focused && 'flash',
@@ -166,7 +178,7 @@ export const Message = memo(function Message({ m, grouped, channelId, inThread, 
             {pending ? <span className="font-mono text-[11px] text-ink-3">{pending.state === 'sending' ? 'sending…' : 'not sent'}</span> : <Time ts={m.ts} />}
             {m.edited && <Tip label={<span className="font-mono">Edited</span>}><span className="font-mono text-[11px] text-ink-3">(edited)</span></Tip>}
             {pinned && <span className="inline-flex items-center gap-1 font-mono text-[11px] text-ink-2"><Pin className="size-3" aria-hidden />pinned</span>}
-            {mentionsMe && <span className="inline-flex items-center gap-1 font-mono text-[11px] text-warn"><AtSign className="size-3" aria-hidden />mentions you</span>}
+            {mentionsMe && <span className="sr-only">mentions you</span>}
           </div>
         )}
         {grouped && (m.edited || pinned) && (

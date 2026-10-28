@@ -1,5 +1,7 @@
 import { mkdirSync } from 'node:fs'
 
+const opt = (name: string) => process.env[name]?.trim() || ''
+
 function need(name: string): string {
   const v = process.env[name]?.trim()
   if (!v) {
@@ -26,9 +28,12 @@ if (sessionSecret.length < 32) {
 }
 
 export const config = {
-  clientId: need('SLACK_CLIENT_ID'),
-  clientSecret: need('SLACK_CLIENT_SECRET'),
-  signingSecret: need('SLACK_SIGNING_SECRET'),
+  // OAuth + Events API are optional: a deployment can run on imported web sessions only.
+  clientId: opt('SLACK_CLIENT_ID'),
+  clientSecret: opt('SLACK_CLIENT_SECRET'),
+  signingSecret: opt('SLACK_SIGNING_SECRET'),
+  /** optional allow-list of Slack user ids (comma separated) that may sign in */
+  allowedUsers: opt('ALLOWED_USER_IDS').split(',').map((s) => s.trim()).filter(Boolean),
   appUrl,
   origin: new URL(appUrl).origin,
   secure: appUrl.startsWith('https://'),
@@ -41,8 +46,13 @@ export const config = {
   // Overridable so the app can be tested against scripts/mock-slack.ts
   slackApi: (process.env.SLACK_API_BASE ?? 'https://slack.com/api').replace(/\/+$/, ''),
   slackOauth: (process.env.SLACK_OAUTH_BASE ?? 'https://slack.com').replace(/\/+$/, ''),
+  // Test overrides: where web-session (xoxc) API calls and the realtime socket go.
+  slackWebBase: process.env.SLACK_WEB_BASE?.replace(/\/+$/, '') ?? '',
+  slackRtmUrl: process.env.SLACK_RTM_URL ?? '',
   isProd: process.env.NODE_ENV === 'production',
 }
+
+export const oauthEnabled = !!(config.clientId && config.clientSecret)
 
 mkdirSync(config.dataDir, { recursive: true })
 

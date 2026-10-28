@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { X } from 'lucide-react'
+import { ArrowLeft, X } from '@/components/icons'
 import { threadKey, useStore } from '@/lib/store'
 import { ChannelIcon, useConvLabel } from './ChannelIcon'
 import { Composer, type ComposerHandle } from './Composer'
@@ -33,7 +33,8 @@ export function ThreadPanel() {
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => { e.preventDefault(); composer.current?.addFiles([...e.dataTransfer.files]) }}
     >
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3 pt-[env(safe-area-inset-top)] lg:px-4 lg:pt-0">
+        <Button variant="ghost" size="touch" className="-ml-1 lg:hidden" aria-label="Back to conversation" onClick={close}><ArrowLeft className="size-4" aria-hidden /></Button>
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold leading-4">Thread</h2>
           {conv && (
@@ -44,7 +45,7 @@ export function ThreadPanel() {
             </p>
           )}
         </div>
-        <Button variant="ghost" size="iconLg" aria-label="Close thread (Esc)" onClick={close}><X className="size-4" aria-hidden /></Button>
+        <Button variant="ghost" size="iconLg" className="max-lg:hidden" aria-label="Close thread (Esc)" onClick={close}><X className="size-4" aria-hidden /></Button>
       </header>
       <MessageList channelId={thread.channel} state={state} inThread focusTs={thread.focus} onNearBottom={noop} />
       <Composer ref={composer} id="composer-thread" channelId={thread.channel} threadTs={thread.ts} placeholder="Reply…" autoFocus />

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Loader2, Search } from 'lucide-react'
+import { ArrowLeft, Loader2, Search } from '@/components/icons'
 import { useStore } from '@/lib/store'
 import { ChannelIcon } from './ChannelIcon'
 import { Mrkdwn } from './Mrkdwn'

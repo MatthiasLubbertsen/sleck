@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Loader2, RefreshCw } from 'lucide-react'
+import { ArrowDown, RefreshCw } from '@/components/icons'
+import { Skeleton, Spinner } from './ui/geist'
 import { useStore, type ChanState, type Msg } from '@/lib/store'
 import { dayKey, dayLabel } from '@/lib/time'
 import { cmpTs } from '@/lib/utils'
@@ -29,6 +30,16 @@ export function buildRows(msgs: Msg[], lastRead: string | undefined, me: string 
     prev = m
   }
   return rows
+}
+
+/** Sticky day labels must be bounded by their own day, or they stack on top of each other. */
+function groupByDay(rows: Row[]) {
+  const groups: { key: string; label: string; rows: Row[] }[] = []
+  for (const r of rows) {
+    if (r.k === 'day') groups.push({ key: r.key, label: r.label, rows: [] })
+    else groups.at(-1)?.rows.push(r)
+  }
+  return groups
 }
 
 interface Props {
@@ -136,7 +147,16 @@ export function MessageList({ channelId, state, inThread, focusTs, lastRead, onN
   }
 
   if (!state || state.status === 'loading') {
-    return <div className="flex flex-1 items-center justify-center text-ink-3" role="status"><Loader2 className="mr-2 size-4 motion-safe:animate-spin" aria-hidden />Loading messages…</div>
+    return (
+      <div className="flex-1 space-y-5 overflow-hidden px-4 py-6" role="status" aria-label="Loading messages">
+        {Array.from({ length: 7 }, (_, i) => (
+          <div key={i} className="flex gap-3">
+            <Skeleton className="size-9 shrink-0" />
+            <div className="flex-1 space-y-2"><Skeleton className="h-3.5 w-32" /><Skeleton className={`h-3.5 ${['w-3/4', 'w-1/2', 'w-5/6', 'w-2/3'][i % 4]}`} /></div>
+          </div>
+        ))}
+      </div>
+    )
   }
   if (state.status === 'error' && !state.msgs.length) {
     return (
@@ -153,28 +173,31 @@ export function MessageList({ channelId, state, inThread, focusTs, lastRead, onN
         <div ref={topSentinel} className="h-px" />
         {!inThread && (
           <div className="flex min-h-10 items-center justify-center px-4 py-2 text-xs text-ink-3" role="status">
-            {state.loadingOlder ? <><Loader2 className="mr-2 size-3.5 motion-safe:animate-spin" aria-hidden />Loading older messages…</> : !state.hasOlder ? <span className="font-mono">— beginning of conversation —</span> : null}
+            {state.loadingOlder ? <><Spinner className="mr-2 size-3.5" />Loading older messages…</> : !state.hasOlder ? <span className="font-mono">— beginning of conversation —</span> : null}
           </div>
         )}
-        {rows.map((r) =>
-          r.k === 'day' ? (
-            <div key={r.key} className="sticky top-0 z-[5] flex items-center gap-3 bg-background/95 px-4 pb-1 pt-3" role="separator" aria-label={r.label}>
+        {groupByDay(rows).map((g) => (
+          <section key={g.key} aria-label={g.label}>
+            <div className="sticky top-0 z-[5] flex items-center gap-3 bg-background px-4 pb-1 pt-3" role="separator" aria-label={g.label}>
               <div className="h-px flex-1 bg-line" />
-              <span className="font-mono text-[11px] uppercase tracking-wide text-ink-2">{r.label}</span>
+              <span className="font-mono text-[11px] uppercase tracking-wide text-ink-2">{g.label}</span>
               <div className="h-px flex-1 bg-line" />
             </div>
-          ) : r.k === 'new' ? (
-            <div key={r.key} data-new-divider className="flex items-center gap-3 px-4 py-1" role="separator" aria-label="New messages">
-              <div className="h-px flex-1 bg-danger-fill" />
-              <span className="font-mono text-[11px] font-semibold uppercase tracking-wide text-danger">▼ New</span>
-              <div className="h-px flex-1 bg-danger-fill" />
-            </div>
-          ) : (
-            <Fragment key={r.key}>
-              <Message m={r.m} grouped={r.grouped} channelId={channelId} inThread={inThread} focused={focusTs === r.m.ts} />
-            </Fragment>
-          ),
-        )}
+            {g.rows.map((r) =>
+              r.k === 'new' ? (
+                <div key={r.key} data-new-divider className="flex items-center gap-3 px-4 py-1" role="separator" aria-label="New messages">
+                  <div className="h-px flex-1 bg-danger-fill" />
+                  <span className="font-mono text-[11px] font-semibold uppercase tracking-wide text-danger">▼ New</span>
+                  <div className="h-px flex-1 bg-danger-fill" />
+                </div>
+              ) : r.k === 'msg' ? (
+                <Fragment key={r.key}>
+                  <Message m={r.m} grouped={r.grouped} channelId={channelId} inThread={inThread} focused={focusTs === r.m.ts} />
+                </Fragment>
+              ) : null,
+            )}
+          </section>
+        ))}
         {pending?.map((p, i) => (
           <Message key={p.clientId} m={p} grouped={i > 0 || (state.msgs.at(-1)?.user === p.user && !!state.msgs.at(-1) && cmpTs(String(Date.now() / 1000), state.msgs.at(-1)!.ts) < GROUP_WINDOW)} channelId={channelId} inThread={inThread} />
         ))}

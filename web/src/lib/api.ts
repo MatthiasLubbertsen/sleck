@@ -51,6 +51,7 @@ export const api = {
     req<Page>(`/history${qs({ channel, latest: o.latest, oldest: o.oldest, inclusive: o.inclusive ? 1 : undefined, limit: o.limit })}`),
   replies: (channel: string, ts: string) => req<Page>(`/replies${qs({ channel, ts })}`),
   conversation: (channel: string) => req<{ channel: any }>(`/conversation${qs({ channel })}`),
+  members: (channel: string) => req<{ members: string[] }>(`/members${qs({ channel })}`),
   presence: (user: string) => req<{ presence: 'active' | 'away' }>(`/presence${qs({ user })}`),
   pins: (channel: string) => req<{ items: any[] }>(`/pins${qs({ channel })}`),
   permalink: (channel: string, ts: string) => req<{ permalink: string }>(`/permalink${qs({ channel, ts })}`),
@@ -65,6 +66,8 @@ export const api = {
   upload: (form: FormData) => req<{ files: any[] }>('/upload', { method: 'POST', body: form }),
   savePrefs: (p: Prefs) => req<Prefs>('/prefs', { method: 'PUT', json: p }),
   logout: (revoke: boolean) => req<{ ok: true }>('/../auth/logout', { json: { revoke } }),
+  authModes: () => fetch('/auth/modes').then((r) => r.json() as Promise<{ oauth: boolean; web: boolean; allowlist: boolean }>),
+  importSession: (blob: string) => fetch('/auth/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ blob }) }).then(async (r) => ({ ok: r.ok, ...(await r.json().catch(() => ({}))) }) as { ok: boolean; error?: string }),
   fileUrl: (url: string, o: { download?: boolean; name?: string } = {}) => `/api/file${qs({ url, download: o.download ? 1 : undefined, name: o.name })}`,
 }
 

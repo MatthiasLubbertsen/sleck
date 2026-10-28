@@ -1,4 +1,4 @@
-import { AlertCircle, Info } from 'lucide-react'
+import { AlertCircle, Info } from '@/components/icons'
 import { useStore } from '@/lib/store'
 
 export function Toaster() {

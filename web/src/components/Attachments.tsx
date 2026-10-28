@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Download, File as FileIcon, FileText, Loader2 } from 'lucide-react'
+import { Download, File as FileIcon, FileText, Loader2 } from '@/components/icons'
 import { api } from '@/lib/api'
 import { fmtBytes } from '@/lib/time'
 import { Mrkdwn } from './Mrkdwn'

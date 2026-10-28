@@ -1,37 +1,37 @@
-# Runs behind a Traefik reverse proxy on its own subdomain (TLS terminates at Traefik).
-# Needs an external docker network shared with Traefik; adjust names/resolver to your setup.
+# Runs behind Traefik on its own subdomain (TLS terminates at Traefik), on the external `proxy` network.
 services:
   sleck:
     build: .
     image: sleck:latest
     restart: unless-stopped
     environment:
-      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:?set in .env}
-      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:?set in .env}
-      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:?set in .env}
+      # OAuth + Events API are optional; leave empty to run on imported browser sessions only
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      ALLOWED_USER_IDS: ${ALLOWED_USER_IDS:-}
       APP_URL: ${APP_URL:?set in .env, e.g. https://sleck.example.com}
       SESSION_SECRET: ${SESSION_SECRET:?set in .env}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set in .env}
-      SLACK_EVENTS: ${SLACK_EVENTS:-auto}
     volumes:
       - sleck-data:/data
-    networks: [traefik]
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    labels:
+    container_name: sleck
+    networks:
+      - proxy # traefik
+    labels: # traefik
       - traefik.enable=true
-      - traefik.docker.network=traefik
+      - traefik.docker.network=proxy
       - traefik.http.routers.sleck.rule=Host(`${SLECK_HOST:?set SLECK_HOST in .env, e.g. sleck.example.com}`)
-      - traefik.http.routers.sleck.entrypoints=websecure
-      - traefik.http.routers.sleck.tls.certresolver=letsencrypt
       - traefik.http.services.sleck.loadbalancer.server.port=3000
-      # Do not attach a compression middleware to this router: it buffers the SSE stream.
+      # No compression middleware on this router: it would buffer the realtime WebSocket.
 
 volumes:
   sleck-data:
 
 networks:
-  traefik:
+  proxy:
     external: true

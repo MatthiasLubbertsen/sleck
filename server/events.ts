@@ -1,12 +1,12 @@
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { config } from './config'
-import { verifySlackSignature } from './signature'
 import { deleteSessionsFor } from './db'
 import { hub } from './hub'
-import { applyMessageEvent, forgetUnread } from './convs'
-import type { Conversation } from '../shared/types'
-import { forgetContext, invalidate, peek } from './slack'
+import { dispatchSlackEvent } from './dispatch'
+import { forgetUnread } from './convs'
+import { verifySlackSignature } from './signature'
+import { forgetContext } from './slack'
 
 const recent = new Map<string, number>()
 function duplicate(id: string | undefined): boolean {
@@ -18,11 +18,11 @@ function duplicate(id: string | undefined): boolean {
   return false
 }
 
-const CONV_EVENTS = /^(channel|group|im|mpim)_(created|rename|archive|unarchive|left|deleted|close|open)$|^member_(joined|left)_channel$/
-
+/** Slack Events API receiver (OAuth installs). Web sessions get the same events over RTM instead. */
 export const events = new Hono()
 
 events.post('/events', bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
+  if (!config.signingSecret) return c.text('events api not configured', 404)
   const raw = await c.req.text()
   if (!verifySlackSignature(config.signingSecret, c.req.header('x-slack-request-timestamp'), c.req.header('x-slack-signature'), raw)) {
     return c.text('invalid signature', 401)
@@ -56,14 +56,6 @@ events.post('/events', bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
     return c.body(null, 200)
   }
 
-  for (const user of users) {
-    hub.markEventsSeen(team, user)
-    applyMessageEvent(team, user, ev, peek<Conversation[]>(`${team}:${user}:convs`))
-    if (CONV_EVENTS.test(ev.type ?? '')) {
-      invalidate(`${team}:${user}:convs`)
-      hub.publish(team, user, { type: 'conversations' })
-    }
-    hub.publish(team, user, { type: 'slack', event: ev })
-  }
+  dispatchSlackEvent(team, users, ev, 'events')
   return c.body(null, 200)
 })
