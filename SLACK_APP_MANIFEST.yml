@@ -1,0 +1,66 @@
+# Create the app in one click: https://api.slack.com/apps -> Create New App -> From a manifest -> paste this.
+# Replace sleck.example.com with your APP_URL host (3 places).
+display_information:
+  name: Sleck
+  description: An alternative Slack client for my own account
+  background_color: "#000000"
+oauth_config:
+  redirect_urls:
+    - https://sleck.example.com/auth/callback
+  scopes:
+    # User scopes only: Sleck acts as you. There is no bot user and no bot scope.
+    user:
+      - channels:read
+      - groups:read
+      - im:read
+      - mpim:read
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      - chat:write
+      - reactions:read
+      - reactions:write
+      - users:read
+      - emoji:read
+      - search:read
+      - files:read
+      - files:write
+      - pins:read
+      - pins:write       # pin / unpin messages
+      - channels:write   # conversations.mark (mark as read) in public channels ...
+      - groups:write     # ... private channels
+      - im:write         # ... DMs, and starting a new DM
+      - mpim:write       # ... group DMs
+      - team:read        # workspace name/icon, and the icon of the other workspace in Slack Connect
+settings:
+  event_subscriptions:
+    request_url: https://sleck.example.com/slack/events
+    user_events:
+      - message.channels
+      - message.groups
+      - message.im
+      - message.mpim
+      - reaction_added
+      - reaction_removed
+      - pin_added
+      - pin_removed
+      - channel_created
+      - channel_rename
+      - channel_archive
+      - channel_unarchive
+      - channel_left
+      - channel_deleted
+      - group_archive
+      - group_unarchive
+      - group_left
+      - group_deleted
+      - group_rename
+      - im_created
+      - im_close
+      - im_open
+      - member_joined_channel
+      - member_left_channel
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

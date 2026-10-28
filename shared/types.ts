@@ -1,0 +1,80 @@
+// Types shared by server and web. Slack payloads are kept loose on purpose:
+// we pass through what Slack sends and only model the fields the UI reads.
+
+export type ConvType = 'public' | 'private' | 'dm' | 'group_dm'
+
+export interface Conversation {
+  id: string
+  type: ConvType
+  name: string
+  /** other party for 1:1 DMs */
+  user?: string
+  isArchived: boolean
+  isMember: boolean
+  isExtShared: boolean
+  sharedTeamIds: string[]
+  contextTeamId?: string
+  topic: string
+  purpose: string
+  numMembers?: number
+  created: number
+}
+
+export interface UnreadState {
+  lastRead: string
+  latestTs: string
+  unread: number
+  mentions: number
+  /** true once we have actually asked Slack */
+  known: boolean
+}
+
+export interface UserLite {
+  id: string
+  name: string
+  display: string
+  real: string
+  avatar: string
+  isBot: boolean
+  deleted: boolean
+  teamId?: string
+  tz?: string
+  title?: string
+}
+
+export interface TeamLite {
+  id: string
+  name: string
+  domain?: string
+  icon?: string
+}
+
+export interface Prefs {
+  pinned: string[]
+  muted: string[]
+  collapsed: string[]
+}
+
+export interface Me {
+  userId: string
+  team: TeamLite
+  csrf: string
+  scopes: string[]
+}
+
+export interface Bootstrap {
+  me: Me
+  conversations: Conversation[]
+  unread: Record<string, UnreadState>
+  prefs: Prefs
+  /** whether Events API deliveries have been seen, i.e. polling is not needed */
+  realtime: boolean
+}
+
+export type StreamEvent =
+  /** sent on every (re)connect; `unread` is a full snapshot so nothing emitted before we connected is lost */
+  | { type: 'hello'; realtime: boolean; unread: Record<string, UnreadState> }
+  | { type: 'slack'; event: any }
+  | { type: 'unread'; channel: string; state: UnreadState }
+  | { type: 'conversations' }
+  | { type: 'revoked' }

@@ -1,0 +1,122 @@
+@import 'tailwindcss';
+
+@font-face {
+  font-family: 'Geist';
+  src: url('../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+/* Tokens mirror the Geist dark scale (vercel.com/geist/colors). Semantic names below map onto them. */
+:root {
+  --ds-background-100: #000000;
+  --ds-background-200: #0a0a0a;
+  --ds-gray-100: #111111;
+  --ds-gray-200: #1a1a1a;
+  --ds-gray-300: #1f1f1f;
+  --ds-gray-400: #292929;
+  --ds-gray-500: #333333;
+  --ds-gray-600: #454545;
+  --ds-gray-700: #707070;
+  --ds-gray-800: #8f8f8f; /* tertiary text: #707070 measures 4.2:1 on black, so lifted to pass AA on hover/active surfaces too */
+  --ds-gray-900: #a1a1a1;
+  --ds-gray-1000: #ededed;
+  --ds-blue-700: #0070f3;
+  --ds-blue-900: #52a8ff;
+  --ds-red-700: #e5484d;
+  --ds-red-900: #ff6166;
+  --ds-amber-700: #f5a623;
+  --ds-amber-900: #ffb224;
+  --ds-green-700: #46a758;
+  --ds-green-900: #62c073;
+
+  --background: var(--ds-background-100);
+  --surface: var(--ds-background-200);
+  --surface-2: var(--ds-gray-100);
+  --line: #1f1f1f;
+  --line-strong: #333333;
+  --ink: var(--ds-gray-1000);
+  --ink-2: var(--ds-gray-900);
+  --ink-3: var(--ds-gray-800);
+  --hover: rgba(255, 255, 255, 0.05);
+  --active: rgba(255, 255, 255, 0.1);
+  --link: var(--ds-blue-900);
+  --focus: var(--ds-blue-900);
+  --danger: var(--ds-red-900);
+  --danger-fill: var(--ds-red-700);
+  --warn: var(--ds-amber-900);
+  --ok: var(--ds-green-900);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-link: var(--link);
+  --color-focus: var(--focus);
+  --color-danger: var(--danger);
+  --color-danger-fill: var(--danger-fill);
+  --color-warn: var(--warn);
+  --color-ok: var(--ok);
+  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 6px;
+  --radius-xl: 6px;
+  --radius-2xl: 6px;
+}
+
+@layer base {
+  * { border-color: var(--line); }
+  html, body, #root { height: 100%; }
+  body {
+    background: var(--background);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    /* slashed zero so 0/O can't be confused, even in prose (Geist `zero` feature) */
+    font-feature-settings: 'zero' 1;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+  code, kbd, pre, samp, .font-mono { font-feature-settings: 'zero' 1; }
+  :focus { outline: none; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+  .focus-inset:focus-visible { outline-offset: -2px; }
+  ::selection { background: rgba(82, 168, 255, 0.35); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2a2a2a; border: 2px solid var(--background); border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+}
+
+.emoji-img { display: inline-block; height: 1.25em; width: 1.25em; vertical-align: -0.3em; object-fit: contain; }
+.emoji-jumbo .emoji-img { height: 2.2em; width: 2.2em; }
+.emoji-jumbo { font-size: 2rem; line-height: 1.3; }
+.msg-body a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+.msg-body a:hover { text-decoration-thickness: 2px; }
+@keyframes pop { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+.pop { animation: pop 120ms ease-out; }
+@keyframes flash { from { background: rgba(82, 168, 255, 0.25); } to { background: transparent; } }
+.flash { animation: flash 1.6s ease-out; }

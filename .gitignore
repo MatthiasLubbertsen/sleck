@@ -1,0 +1,8 @@
+node_modules
+dist
+data
+.env
+*.log
+.vite
+tsconfig.*.tsbuildinfo
+data-test

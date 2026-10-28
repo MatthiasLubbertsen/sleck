@@ -1,0 +1,69 @@
+import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
+import { config } from './config'
+import { verifySlackSignature } from './signature'
+import { deleteSessionsFor } from './db'
+import { hub } from './hub'
+import { applyMessageEvent, forgetUnread } from './convs'
+import type { Conversation } from '../shared/types'
+import { forgetContext, invalidate, peek } from './slack'
+
+const recent = new Map<string, number>()
+function duplicate(id: string | undefined): boolean {
+  if (!id) return false
+  const now = Date.now()
+  for (const [k, t] of recent) if (now - t > 10 * 60_000) recent.delete(k)
+  if (recent.has(id)) return true
+  recent.set(id, now)
+  return false
+}
+
+const CONV_EVENTS = /^(channel|group|im|mpim)_(created|rename|archive|unarchive|left|deleted|close|open)$|^member_(joined|left)_channel$/
+
+export const events = new Hono()
+
+events.post('/events', bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
+  const raw = await c.req.text()
+  if (!verifySlackSignature(config.signingSecret, c.req.header('x-slack-request-timestamp'), c.req.header('x-slack-signature'), raw)) {
+    return c.text('invalid signature', 401)
+  }
+  let body: any
+  try {
+    body = JSON.parse(raw)
+  } catch {
+    return c.text('bad request', 400)
+  }
+  if (body.type === 'url_verification') return c.json({ challenge: body.challenge })
+  if (body.type !== 'event_callback') return c.body(null, 200)
+  if (duplicate(body.event_id)) return c.body(null, 200)
+
+  const ev = body.event ?? {}
+  const team: string = body.team_id ?? ev.team ?? ''
+  const users: string[] = [...new Set<string>((body.authorizations ?? []).map((a: any) => a.user_id).concat(body.authed_users ?? []))]
+
+  if (ev.type === 'tokens_revoked') {
+    for (const u of ev.tokens?.oauth ?? []) {
+      hub.close(team, u)
+      forgetContext(`${team}:${u}`)
+      forgetUnread(`${team}:${u}`)
+      deleteSessionsFor(team, u)
+    }
+    return c.body(null, 200)
+  }
+  if (ev.type === 'app_uninstalled') {
+    for (const u of users) hub.close(team, u)
+    deleteSessionsFor(team)
+    return c.body(null, 200)
+  }
+
+  for (const user of users) {
+    hub.markEventsSeen(team, user)
+    applyMessageEvent(team, user, ev, peek<Conversation[]>(`${team}:${user}:convs`))
+    if (CONV_EVENTS.test(ev.type ?? '')) {
+      invalidate(`${team}:${user}:convs`)
+      hub.publish(team, user, { type: 'conversations' })
+    }
+    hub.publish(team, user, { type: 'slack', event: ev })
+  }
+  return c.body(null, 200)
+})
