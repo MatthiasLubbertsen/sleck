@@ -29,9 +29,13 @@ function loadPlaywright() {
   mkdirSync(dir, { recursive: true })
   if (!existsSync(join(dir, 'node_modules', 'playwright-core'))) {
     console.log('First run: installing playwright-core (one time, ~10 MB)...')
-    const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund', '--silent', '--prefix', dir, 'playwright-core@1'], { stdio: 'inherit' })
+    // On Windows npm is npm.cmd; since Node 20.12 .cmd files can only be spawned through a shell.
+    // The arguments are constants, so the shell is safe here.
+    const win = process.platform === 'win32'
+    const r = spawnSync(win ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund', '--silent', '--prefix', dir, 'playwright-core@1'], { stdio: 'inherit', shell: win })
     if (r.status !== 0) {
-      console.error('Could not install playwright-core. Install Node 22+/npm, or use the manual DevTools route from the README.')
+      console.error(`Could not install playwright-core (${r.error?.message ?? `npm exited with code ${r.status}`}).`)
+      console.error(`Is Node 22+/npm installed and online? Workaround: in an empty folder run  npm init -y && npm i playwright-core  then  node grab.mjs  from that folder. Or use the manual DevTools route from the README.`)
       process.exit(1)
     }
   }
