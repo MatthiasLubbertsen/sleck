@@ -104,7 +104,7 @@ cp .env.example .env     # set APP_URL, SLECK_HOST, SESSION_SECRET, ENCRYPTION_K
 docker compose up -d --build
 ```
 
-`docker-compose.yml` expects an external network `traefik`, entrypoint `websecure` and resolver `letsencrypt`; adjust the labels. The container is non-root, read-only, no capabilities, SQLite in the `sleck-data` volume. WebSockets pass through Traefik by default; **don't attach a compression middleware** to this router.
+`docker-compose.yml` joins the external `proxy` network and sets the Traefik labels (`traefik.enable`, `traefik.docker.network=proxy`, router rule `Host(\`$SLECK_HOST\`)`, service port 3000); entrypoints/TLS come from your Traefik defaults. No Sablier. The container is non-root, read-only, no capabilities, SQLite in the `sleck-data` volume. WebSockets pass through Traefik by default; **don't attach a compression middleware** to this router.
 
 ## How realtime works (no polling)
 
