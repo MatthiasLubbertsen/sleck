@@ -45,14 +45,14 @@ Both work at the same time on one deployment; the login screen shows what is con
 
 ### Browser session: get the cookie
 
-**Easiest: the grab script.** It opens a real browser, you sign in to Slack as normal, it reads the two values and prints one blob (also copies it to your clipboard).
+**Easiest: the grab script. Run it on your own computer, not on the server** (it needs a browser window). Your Sleck server serves it, so no repo checkout is needed, only Node 22+:
 
 ```bash
-scripts/grab-slack-session.sh              # first run installs Playwright; uses your Chrome if you have it
-scripts/grab-slack-session.sh --team T0123ABCD   # if you are in several workspaces and it can't tell which
+curl -fsSL https://sleck.example.com/grab-slack-session.mjs -o grab.mjs && node grab.mjs
+node grab.mjs --team T0123ABCD       # if you are in several workspaces and it can't tell which
 ```
 
-Paste the blob into Sleck → **Use a browser session**. The temporary browser profile is deleted afterwards; nothing is sent anywhere by the script. (Windows: run it from WSL or Git Bash, or use the manual route.)
+(The login box shows this command with your real host.) It drives your installed Chrome or Edge (first run installs a ~10 MB `playwright-core` into `~/.cache/sleck-grab`; it only downloads Chromium if you have neither). You sign in to Slack as normal; it reads the two values, prints one blob and copies it to your clipboard, and deletes its temporary browser profile. Paste the blob into Sleck → **Use a browser session**. Nothing is sent anywhere by the script. The same script lives in the repo at `web/public/grab-slack-session.mjs`.
 
 **Manual route** (no tools):
 1. Sign in at <https://app.slack.com/client> and open your workspace.
@@ -99,12 +99,16 @@ Open <http://localhost:5173>. Browser-session sign-in needs no tunnel: the serve
 
 ## Deploy with Docker (behind Traefik)
 
+Images are built by GitHub Actions (`.github/workflows/ci.yml`): every push to `main` runs lint, typecheck, tests and the build, then pushes a multi-arch (amd64 + arm64) image to **`ghcr.io/matthiaslubbertsen/sleck`** tagged `latest` and the short commit SHA (`v*` tags also get semver tags). Pull requests only check that the image builds.
+
 ```bash
 cp .env.example .env     # set APP_URL, SLECK_HOST, SESSION_SECRET, ENCRYPTION_KEY, ALLOWED_USER_IDS
-docker compose up -d --build
+docker compose pull && docker compose up -d
 ```
 
-`docker-compose.yml` joins the external `proxy` network and sets the Traefik labels (`traefik.enable`, `traefik.docker.network=proxy`, router rule `Host(\`$SLECK_HOST\`)`, service port 3000); entrypoints/TLS come from your Traefik defaults. No Sablier. The container is non-root, read-only, no capabilities, SQLite in the `sleck-data` volume. WebSockets pass through Traefik by default; **don't attach a compression middleware** to this router.
+- **First time:** new GHCR packages are private. Either make it public (GitHub → your profile → Packages → sleck → Package settings → Change visibility), or log the server in once: `echo $TOKEN | docker login ghcr.io -u <user> --password-stdin` with a classic token that has `read:packages`.
+- `docker-compose.yml` joins the external `proxy` network and sets the Traefik labels (`traefik.enable`, `traefik.docker.network=proxy`, router rule `Host(`$SLECK_HOST`)`, service port 3000); entrypoints/TLS come from your Traefik defaults. No Sablier. The container is non-root, read-only, no capabilities, SQLite in the `sleck-data` volume. **Don't attach a compression middleware** to this router: it buffers the WebSocket.
+- Update: `docker compose pull && docker compose up -d`. Local build instead: `docker build -t sleck .` and point `image:` at it.
 
 ## How realtime works (no polling)
 
@@ -135,6 +139,7 @@ scripts/test-stack.sh oauth && MODE=oauth node scripts/e2e.mjs   # OAuth + Event
 node scripts/a11y.mjs                                            # axe-core, WCAG 2 A/AA
 node scripts/screenshots.mjs                                     # regenerates docs/screenshots
 scripts/dev-check.sh                                             # `npm run dev` incl. WebSocket through Vite
+scripts/mem-check.sh                                             # resident memory of the production bundle
 ```
 
 `scripts/mock-slack.ts` fakes OAuth, the Web API calls Sleck uses (including `client.counts`, sections, `rtm.connect`) and a realtime socket. It is **not Slack**. Playwright e2e uses the global Playwright; if your local one wants other browser builds set `PW_EXE=/path/to/chromium`.

@@ -3,26 +3,42 @@
 // client uses to talk to the server: the `d` cookie and the workspace's xoxc token. Prints one blob to
 // paste into Sleck's "Use a browser session" box. Nothing is sent anywhere by this script.
 //
-//   scripts/grab-slack-session.sh                 (installs Playwright + Chromium on first run)
-//   node scripts/grab-slack-session.mjs --team T0123ABCD    pick a workspace if you are in several
-//   --browser chrome|chromium|msedge|firefox-free   which browser to drive (default: your installed Chrome, else bundled Chromium)
+//   curl -fsSL https://YOUR-SLECK-HOST/grab-slack-session.mjs -o grab.mjs && node grab.mjs     (anywhere, needs Node 22+)
+//   node grab.mjs --team T0123ABCD    pick a workspace if you are in several
 //   --executable <path>  use this browser binary (or env SLECK_BROWSER_PATH)
 //   --no-clipboard   --headless (tests only)   --start-url / --cookie-url (tests only)
 
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const require = createRequire(import.meta.url)
-let chromium
-try {
-  ;({ chromium } = require('playwright'))
-} catch {
-  console.error('Playwright is not installed. Run scripts/grab-slack-session.sh (it installs it), or: npm i -D playwright && npx playwright install chromium')
-  process.exit(1)
+// Standalone: works from anywhere (no repo needed). If Playwright isn't resolvable here, a small
+// copy of playwright-core is installed once into ~/.cache/sleck-grab (no browser download: it drives
+// your installed Chrome; only if there is none does it fetch Chromium).
+function loadPlaywright() {
+  for (const base of [process.cwd() + '/', import.meta.url]) {
+    for (const name of ['playwright', 'playwright-core']) {
+      try {
+        return { pw: createRequire(base)(name), dir: null }
+      } catch { /* try the next */ }
+    }
+  }
+  const dir = join(homedir(), '.cache', 'sleck-grab')
+  mkdirSync(dir, { recursive: true })
+  if (!existsSync(join(dir, 'node_modules', 'playwright-core'))) {
+    console.log('First run: installing playwright-core (one time, ~10 MB)...')
+    const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund', '--silent', '--prefix', dir, 'playwright-core@1'], { stdio: 'inherit' })
+    if (r.status !== 0) {
+      console.error('Could not install playwright-core. Install Node 22+/npm, or use the manual DevTools route from the README.')
+      process.exit(1)
+    }
+  }
+  return { pw: createRequire(dir + '/')('playwright-core'), dir }
 }
+const { pw, dir: depsDir } = loadPlaywright()
+const { chromium } = pw
 
 const arg = (name) => {
   const i = process.argv.indexOf(name)
@@ -44,10 +60,18 @@ const launch = async () => {
   if (opts.executablePath) return chromium.launchPersistentContext(profile, opts)
   const want = arg('--browser')
   if (want && want !== 'chromium') return chromium.launchPersistentContext(profile, { ...opts, channel: want })
+  for (const channel of ['chrome', 'msedge']) {
+    try {
+      // prefer a browser you already have: no download, and it looks like your normal login
+      return await chromium.launchPersistentContext(profile, { ...opts, channel })
+    } catch { /* not installed */ }
+  }
   try {
-    // prefer the browser you already have: no download, and it looks like your normal login
-    return await chromium.launchPersistentContext(profile, { ...opts, channel: 'chrome' })
+    return await chromium.launchPersistentContext(profile, opts)
   } catch {
+    console.log('No Chrome/Edge found: downloading Chromium once...')
+    const cli = join(depsDir ?? process.cwd(), 'node_modules', 'playwright-core', 'cli.js')
+    spawnSync(process.execPath, [cli, 'install', 'chromium'], { stdio: 'inherit' })
     return chromium.launchPersistentContext(profile, opts)
   }
 }
