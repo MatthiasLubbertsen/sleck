@@ -8,6 +8,7 @@ import { auth } from './auth'
 import { api } from './api'
 import { events } from './events'
 import { purgeExpired } from './db'
+import { attachWebSocket } from './ws'
 
 const app = new Hono()
 
@@ -22,7 +23,7 @@ app.use('*', secureHeaders({
     imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
     mediaSrc: ["'self'"],
     fontSrc: ["'self'"],
-    connectSrc: ["'self'"],
+    connectSrc: ["'self'", config.origin.replace(/^http/, 'ws')],
     manifestSrc: ["'self'"],
     frameAncestors: ["'none'"],
     baseUri: ["'none'"],
@@ -62,4 +63,5 @@ if (webRoot) {
 }
 
 setInterval(purgeExpired, 3600_000).unref()
-serve({ fetch: app.fetch, port: config.port }, (i) => console.log(`sleck listening on :${i.port} (${config.appUrl})`))
+const server = serve({ fetch: app.fetch, port: config.port }, (i) => console.log(`sleck listening on :${i.port} (${config.appUrl})`))
+attachWebSocket(server as import('node:http').Server)

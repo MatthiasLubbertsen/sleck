@@ -1,8 +1,9 @@
 import { create } from 'zustand'
-import type { Conversation, Me, Prefs, StreamEvent, TeamLite, UnreadState, UserLite } from '../../../shared/types'
+import type { Conversation, LiveState, Me, Prefs, Section, StreamEvent, TeamLite, UnreadState, UserLite } from '../../../shared/types'
 import { api, ApiError, hooks, refreshUnread, setCsrf } from './api'
 import { cmpTs, uid } from './utils'
 import { loadEmoji } from './emoji'
+import { socket } from './socket'
 
 export interface Reaction { name: string; count: number; users: string[] }
 export interface Msg {
@@ -86,9 +87,14 @@ interface State {
   teams: Record<string, TeamLite>
   customEmoji: Record<string, string>
   emojiVersion: number
-  realtime: boolean
-  connected: boolean
+  /** what feeds us live updates server-side (Events API / RTM), as the server reports it */
+  live: LiveState
+  /** is our own WebSocket to the server up */
+  socketUp: boolean
   rateLimitedUntil: number
+  sections?: Section[]
+  slackMuted: string[]
+  sidebarView: 'home' | 'dms' | 'activity'
 
   channelId?: string
   anchor?: string
@@ -98,6 +104,8 @@ interface State {
   openedLastRead: Record<string, string>
   noAutoMark: Record<string, true>
   drafts: Record<string, string>
+  /** touch devices: the message whose action bar is open (tap to open) */
+  touchActive: string | null
   /** ts of the own message being edited inline */
   editTs: string | null
 
@@ -107,11 +115,12 @@ interface State {
   shortcuts: boolean
   search: SearchState
   toasts: Toast[]
-  live: string
+  /** text for the screen-reader live region */
+  announce: string
 
   init: () => Promise<void>
   refreshConvs: () => Promise<void>
-  selectChannel: (id: string, o?: { anchor?: string; thread?: string }) => Promise<void>
+  selectChannel: (id: string, o?: { anchor?: string; thread?: string; history?: 'push' | 'none' }) => Promise<void>
   loadOlder: (channel: string) => Promise<void>
   jumpToLatest: (channel: string) => Promise<void>
   syncChannel: (channel: string) => Promise<void>
@@ -148,7 +157,6 @@ const errText = (e: unknown) => {
 }
 
 const seenReplies = new Set<string>()
-let stream: EventSource | null = null
 const wantUsers = new Set<string>()
 let userTimer: ReturnType<typeof setTimeout> | undefined
 const wantTeams = new Set<string>()
@@ -189,9 +197,11 @@ export const useStore = create<State>((set, get) => {
     teams: {},
     customEmoji: {},
     emojiVersion: 0,
-    realtime: false,
-    connected: false,
+    live: 'none',
+    socketUp: false,
     rateLimitedUntil: 0,
+    slackMuted: [],
+    sidebarView: 'home',
     thread: null,
     chans: {},
     threads: {},
@@ -199,13 +209,14 @@ export const useStore = create<State>((set, get) => {
     noAutoMark: {},
     drafts: {},
     editTs: null,
+    touchActive: null,
     drawer: false,
     switcher: false,
     searchOpen: false,
     shortcuts: false,
     search: { query: '', loading: false, matches: [], total: 0, page: 1, pages: 1 },
     toasts: [],
-    live: '',
+    announce: '',
 
     set: (p) => set(p),
 
@@ -218,42 +229,38 @@ export const useStore = create<State>((set, get) => {
     init: async () => {
       hooks.unauthorized = () => {
         if (get().status === 'ready') set({ status: 'expired' })
-        stream?.close()
+        socket.stop()
       }
       hooks.rateLimited = (s) => set({ rateLimitedUntil: Date.now() + s * 1000 })
       const q = new URLSearchParams(location.search)
       try {
         const b = await api.bootstrap()
         setCsrf(b.me.csrf)
-        set({ status: 'ready', me: b.me, convs: b.conversations, unread: b.unread, prefs: b.prefs, realtime: b.realtime })
+        set({ status: 'ready', me: b.me, convs: b.conversations, unread: b.unread, prefs: b.prefs, live: b.live, sections: b.sections, slackMuted: b.slackMuted ?? [] })
+        // Web sessions do not preload the (possibly huge) user directory: resolve DM partners on demand.
+        get().ensureUsers([b.me.userId, ...b.conversations.filter((c) => c.type === 'dm' && c.user).map((c) => c.user!)])
         void api.users().then((r) => set((s) => ({ users: { ...s.users, ...Object.fromEntries(r.users.map((u) => [u.id, u])) } }))).catch(() => undefined)
         void api.emoji().then((r) => set((s) => ({ customEmoji: r.emoji, emojiVersion: s.emojiVersion + 1 }))).catch(() => undefined)
         void loadEmoji().then(() => set((s) => ({ emojiVersion: s.emojiVersion + 1 })))
         get().ensureTeams([b.me.team.id, ...new Set(b.conversations.flatMap((c) => c.sharedTeamIds))])
 
-        stream = new EventSource('/api/stream')
-        let wasDown = false
-        stream.addEventListener('m', (ev) => handle(JSON.parse((ev as MessageEvent).data)))
-        stream.onopen = () => {
-          set({ connected: true })
-          if (wasDown) {
-            const { channelId } = get()
-            if (channelId) void get().syncChannel(channelId)
-            void get().syncThread()
-            void get().refreshConvs()
-          }
-        }
-        stream.onerror = () => {
-          wasDown = true
-          set({ connected: false })
-          setTimeout(() => void fetch('/api/prefs').then((r) => r.status === 401 && hooks.unauthorized()).catch(() => undefined), 2000)
-        }
+        socket.start({
+          onEvent: handle,
+          onOpen: (reconnected) => {
+            set({ socketUp: true })
+            if (reconnected) resync()
+          },
+          onClose: () => set({ socketUp: false }),
+          onUnauthorized: () => hooks.unauthorized(),
+        })
+        // a tab that was asleep may have missed events even though the socket looks fine
+        document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && resync())
 
         const fromHash = () => {
           const [, id, ts] = location.hash.match(/^#\/([A-Z0-9]+)(?:\/([\d.]+))?/) ?? []
-          if (id && get().convs.some((c) => c.id === id)) void get().selectChannel(id, { anchor: ts })
+          if (id && get().convs.some((c) => c.id === id)) void get().selectChannel(id, { anchor: ts, history: 'none' })
         }
-        window.addEventListener('hashchange', fromHash)
+        window.addEventListener('popstate', fromHash) // browser back/forward (and the top bar arrows)
         fromHash()
         if (!get().channelId) {
           const first = b.conversations.find((c) => c.name === 'general') ?? b.conversations.find((c) => c.type === 'public') ?? b.conversations[0]
@@ -284,7 +291,9 @@ export const useStore = create<State>((set, get) => {
       const known = s.unread[id]
       set({ channelId: id, anchor: o.anchor, drawer: false, searchOpen: false, thread: s.channelId === id ? s.thread : null, openedLastRead: { ...s.openedLastRead, [id]: known?.lastRead ?? '0' }, noAutoMark: Object.fromEntries(Object.entries(s.noAutoMark).filter(([k]) => k === id)) as Record<string, true> })
       const hash = `#/${id}${o.anchor ? '/' + o.anchor : ''}`
-      if (location.hash !== hash) history.replaceState(null, '', hash)
+      if (location.hash !== hash && o.history !== 'none') history.pushState(null, '', hash)
+      // who is in here: feeds @mention autocomplete and name resolution without a full directory
+      void api.members(id).then((r) => get().ensureUsers(r.members)).catch(() => undefined)
       // First visit before background hydration reached this conversation: ask now, so the
       // "new messages" divider is placed correctly before we render.
       const stateP = known?.known ? Promise.resolve(null) : refreshUnread(id).then((r) => r.state).catch(() => null)
@@ -397,7 +406,15 @@ export const useStore = create<State>((set, get) => {
           dropPending()
           setTimeout(() => (thread_ts ? void get().syncThread() : void get().syncChannel(channel)), 1200)
         } else {
-          const r = await api.send({ channel, text, thread_ts, reply_broadcast: broadcast })
+          // Over the WebSocket when it is up (acked), plain HTTP otherwise.
+          let r: { ts: string; message: any }
+          if (socket.open) {
+            const ack = await socket.request({ op: 'send', channel, text, thread_ts, reply_broadcast: broadcast })
+            if (!ack.ok) throw new ApiError(400, ack.error ?? 'send_failed')
+            r = { ts: ack.ts!, message: ack.message }
+          } else {
+            r = await api.send({ channel, text, thread_ts, reply_broadcast: broadcast })
+          }
           dropPending()
           const real: Msg = { ...r.message, ts: r.ts, user: r.message?.user ?? me, text: r.message?.text ?? text, thread_ts }
           if (thread_ts) {
@@ -567,7 +584,7 @@ export const useStore = create<State>((set, get) => {
       try {
         await api.logout(revoke)
       } finally {
-        stream?.close()
+        socket.stop()
         location.href = '/'
       }
     },
@@ -575,16 +592,23 @@ export const useStore = create<State>((set, get) => {
 
   function handle(e: StreamEvent) {
     switch (e.type) {
-      case 'hello': set((s) => ({ realtime: e.realtime, unread: { ...s.unread, ...e.unread } })); break
+      case 'hello': set((s) => ({ live: e.live, unread: { ...s.unread, ...e.unread } })); break
+      case 'live': set({ live: e.live }); break
+      case 'resync': resync(); break
       case 'unread': set((s) => ({ unread: { ...s.unread, [e.channel]: e.state } })); break
       case 'conversations': void get().refreshConvs(); break
-      case 'revoked': set({ status: 'expired' }); stream?.close(); break
-      case 'slack': {
-        if (!get().realtime) set({ realtime: true })
-        applyEvent(e.event)
-        break
-      }
+      case 'revoked': set({ status: 'expired' }); socket.stop(); break
+      case 'slack': applyEvent(e.event); break
     }
+  }
+
+  /** Catch up on what we are looking at; used after any gap (reconnect, upstream drop, tab wake). */
+  function resync() {
+    const { channelId, thread, status } = get()
+    if (status !== 'ready') return
+    if (channelId) void get().syncChannel(channelId)
+    if (thread) void get().syncThread()
+    void get().refreshConvs()
   }
 
   function applyEvent(ev: any) {
@@ -629,7 +653,7 @@ export const useStore = create<State>((set, get) => {
     noteUsers([m])
     if (ev.user !== me && ev.channel === get().channelId) {
       const who = get().users[ev.user]?.display ?? 'Someone'
-      set({ live: `New message from ${who}: ${(ev.text ?? '').slice(0, 140)}` })
+      set({ announce: `New message from ${who}: ${(ev.text ?? '').slice(0, 140)}` })
     }
   }
 })

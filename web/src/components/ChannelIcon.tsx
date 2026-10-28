@@ -1,4 +1,4 @@
-import { Archive, Hash, Link2, Lock, User, Users } from 'lucide-react'
+import { Archive, Hash, Link2, Lock, User, Users } from '@/components/icons'
 import type { Conversation } from '../../../shared/types'
 import { useStore } from '@/lib/store'
 
@@ -8,7 +8,7 @@ export function ChannelIcon({ conv, className = 'size-4' }: { conv: Pick<Convers
   const Icon = conv.isArchived ? Archive : conv.type === 'public' ? Hash : conv.type === 'private' ? Lock : conv.type === 'dm' ? User : Users
   return (
     <span className="inline-flex shrink-0 items-center gap-0.5 text-ink-2" role="img" aria-label={label + (conv.isExtShared ? ', shared with another organization' : '')}>
-      <Icon className={className} aria-hidden strokeWidth={2} />
+      <Icon className={className} aria-hidden />
       {conv.isExtShared && <Link2 className="size-3 text-ink-3" aria-hidden />}
     </span>
   )

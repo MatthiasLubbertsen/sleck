@@ -1,119 +1,160 @@
 # Sleck
 
-An alternative Slack client for **your own** Slack account. Sign in with Slack, see every conversation you're in, read and send messages, react, thread, search, upload files, all keyboard-first, in a dark, high-contrast Geist-style UI.
+An alternative Slack client for **your own** Slack account: every conversation you're in, realtime over WebSockets, threads, reactions, emoji, search, uploads, keyboard-first, in a dark Geist-style UI that works on a phone.
 
-- **Frontend:** React + Vite + TypeScript, Tailwind v4, shadcn/ui-style components (Radix), Geist Sans / Geist Mono.
-- **Backend:** Node 22 + Hono. Handles OAuth, keeps the Slack token server-side (AES-256-GCM in SQLite), proxies the Slack Web API, receives Events API deliveries and fans them out to the browser over SSE.
-- **Single user, workspace-aware:** the data model is keyed by `(team_id, user_id)` everywhere (sessions, prefs, caches, queues), so multi-workspace can be added later.
+|  |  |
+|---|---|
+| ![Channel](docs/screenshots/02-channel-desktop.png) | ![Thread](docs/screenshots/03-thread-desktop.png) |
+| ![Phone](docs/screenshots/14-channel-phone.png) | ![Drawer](docs/screenshots/15-drawer-phone.png) |
+
+More: [emoji picker](docs/screenshots/05-emoji-picker-desktop.png) · [@mention autocomplete](docs/screenshots/06-mention-autocomplete-desktop.png) · [quick switcher](docs/screenshots/07-quick-switcher-desktop.png) · [profile menu](docs/screenshots/08-profile-menu-desktop.png) · [search](docs/screenshots/11-search-desktop.png) · [message actions](docs/screenshots/04-message-actions-desktop.png) · [tablet](docs/screenshots/13-channel-tablet.png) · [phone: thread](docs/screenshots/17-thread-phone.png), [actions](docs/screenshots/18-message-actions-phone.png), [search](docs/screenshots/19-search-phone.png), [login](docs/screenshots/20-login-phone.png). The screenshots show a mock workspace (`scripts/mock-slack.ts`), not real data.
+
+- **Frontend:** React + Vite + TypeScript, Tailwind v4, Radix-based components styled to Geist conventions, Geist Sans / Geist Mono, Geist icons.
+- **Backend:** Node 22 + Hono. Keeps your Slack credentials server-side (AES-256-GCM in SQLite), proxies the Slack Web API, holds the realtime connection to Slack and relays it to your browser over a WebSocket.
+- **Single user, workspace-aware:** everything is keyed by `(team_id, user_id)`, so multi-workspace can be added later.
 
 ```
 server/    Hono backend
-  index.ts       app wiring, CSP/security headers, static files
-  config.ts      env parsing, user scopes
-  auth.ts        /auth/login /auth/callback /auth/logout, session + CSRF middleware
-  api.ts         /api/* routes (allow-listed Slack calls, uploads, file proxy, SSE)
-  slack.ts       Slack client: queue, 429/Retry-After handling, TTL cache
-  convs.ts       conversation list + unread/mention tracking
-  events.ts      /slack/events (signature-verified), hub.ts SSE fan-out
-  db.ts crypto.ts signature.ts
-web/src/   React app (components/, lib/store.ts is the client state)
+  index.ts       wiring, CSP/security headers, static files, WebSocket upgrade
+  auth.ts        sign-in (OAuth + browser-session import), session + CSRF middleware
+  api.ts         /api/* (allow-listed Slack calls, uploads, file proxy)
+  ws.ts          browser <-> server WebSocket (/api/ws): events down, `send` up (acked)
+  rtm.ts         Slack realtime socket for browser sessions (reconnect, resync)
+  events.ts      Events API receiver for OAuth installs; dispatch.ts shared event pipeline
+  slack.ts       Slack client: queue, 429/Retry-After, TTL cache; convs.ts unread tracking
+  db.ts crypto.ts signature.ts hub.ts config.ts
+web/src/   React app (components/, lib/store.ts = client state, lib/socket.ts = WebSocket client)
 shared/    types shared by both
-scripts/   mock Slack + e2e + a11y checks
+scripts/   grab-slack-session, mock Slack, e2e / a11y / screenshots
 ```
 
-## 1. Create the Slack app
+## Two ways to sign in
 
-1. Edit `SLACK_APP_MANIFEST.yml`: replace `sleck.example.com` with your host (3 places: redirect URL, events URL).
-2. <https://api.slack.com/apps> → **Create New App → From a manifest** → pick your workspace → paste the manifest → Create.
-3. On **Basic Information** copy the **Client ID**, **Client Secret** and **Signing Secret** into your env (below).
-4. **Event Subscriptions**: the request URL is verified when Sleck is reachable at `APP_URL` (it answers Slack's `url_verification`). Until then, saving the manifest may show the URL as unverified; click *Retry* once the app is running.
-5. Keep the app **un-distributed** (don't submit it to the Marketplace or enable public distribution). Slack applies much stricter rate limits to *distributed* non-Marketplace apps (e.g. `conversations.history` at 1 request/minute); internal apps for your own workspace are not affected.
-6. Open `APP_URL`, click **Sign in with Slack**, approve.
+| | **Browser session** (recommended) | **Official OAuth app** |
+|---|---|---|
+| What it uses | the same `xoxc` token + `d` cookie Slack's own web client uses | a Slack app you create, user scopes only |
+| Realtime | Slack's realtime websocket (RTM), no setup | Events API: needs a public HTTPS URL and event subscriptions |
+| Unread / mentions | exact, from Slack (`client.counts`) | derived in the background (slow on big workspaces) |
+| Sidebar sections & mute state | Slack's own (`users.channelSections.list`, `users.prefs.get`) | local only |
+| Rate limits | as the web client | stricter if the app is distributed |
+| Terms of service | **grey area**: it is an undocumented API; Slack may rate-limit or block it | fully supported |
 
-### Scopes (user scopes only, no bot)
+Both work at the same time on one deployment; the login screen shows what is configured.
 
-The manifest requests everything you listed, plus four additions that Slack requires for features you asked for:
+> **Use a browser session only for your own account, on your own server.** The blob you paste is your live Slack login. Sleck stores it encrypted and never sends it to the browser, but Slack's terms don't bless this API, so there is some risk to your account. The undocumented methods used come from the community catalogue at <https://vs.izie.top/redocumented> (`rtm.connect`, `client.counts`, `users.channelSections.list`, `users.prefs.get`). That catalogue marks some of them live-verified; **none of this has been run against a real workspace by the author of this repo**, only against the mock.
 
-| Added | Why |
-|---|---|
-| `pins:write` | pinning / unpinning needs it (`pins:read` only lists pins) |
-| `groups:write`, `im:write`, `mpim:write` | `conversations.mark` (mark as read) needs the `:write` scope matching the conversation type, not just `channels:write`; `im:write` also starts new DMs from the quick switcher |
-| `team:read` | workspace name/icon and the small icon of the other workspace for Slack Connect |
+### Browser session: get the cookie
 
-## 2. Environment variables
+**Easiest: the grab script.** It opens a real browser, you sign in to Slack as normal, it reads the two values and prints one blob (also copies it to your clipboard).
+
+```bash
+scripts/grab-slack-session.sh              # first run installs Playwright; uses your Chrome if you have it
+scripts/grab-slack-session.sh --team T0123ABCD   # if you are in several workspaces and it can't tell which
+```
+
+Paste the blob into Sleck → **Use a browser session**. The temporary browser profile is deleted afterwards; nothing is sent anywhere by the script. (Windows: run it from WSL or Git Bash, or use the manual route.)
+
+**Manual route** (no tools):
+1. Sign in at <https://app.slack.com/client> and open your workspace.
+2. DevTools (F12) → **Application** (Chrome) / **Storage** (Firefox) → **Cookies** → `https://app.slack.com`. Copy the value of the cookie named **`d`** (starts `xoxd-`). It is `HttpOnly`, so it only shows in this panel, not in the console.
+3. In the **Console**: `Object.values(JSON.parse(localStorage.localConfig_v2).teams).map(t => [t.name, t.url, t.token])`. Pick your workspace; the token starts `xoxc-`, the URL is like `https://myteam.slack.com/`.
+4. Paste this JSON into the login box:
+   ```json
+   {"token":"xoxc-…","cookie":"xoxd-…","host":"myteam.slack.com"}
+   ```
+
+When the cookie expires or you sign out of Slack everywhere, Sleck shows "session ended" and you repeat the above.
+
+### Official OAuth app (optional)
+
+1. Edit `SLACK_APP_MANIFEST.yml`: replace `sleck.example.com` with your host (3 places).
+2. <https://api.slack.com/apps> → **Create New App → From a manifest** → paste → Create.
+3. Copy **Client ID / Client Secret / Signing Secret** into your env (below). Keep the app **un-distributed**: Slack applies much stricter limits (e.g. `conversations.history` 1 req/min) to distributed non-Marketplace apps.
+4. Event Subscriptions: Slack verifies `https://<host>/slack/events` once Sleck is reachable (it answers `url_verification`). Without it, OAuth sign-in works but there are **no live updates**; Sleck says so in a banner and the profile menu.
+
+User scopes requested (no bot): everything you listed plus `pins:write` (pinning), `groups:write` / `im:write` / `mpim:write` (`conversations.mark` needs the write scope matching the conversation type; `im:write` also starts new DMs) and `team:read` (workspace name/icon, Slack Connect icon).
+
+## Environment variables
 
 | Var | Meaning |
 |---|---|
-| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` | from the Slack app |
-| `SLACK_SIGNING_SECRET` | verifies `/slack/events` requests |
-| `APP_URL` | public URL, no trailing slash, e.g. `https://sleck.example.com`. Must match the manifest. `https` ⇒ `Secure` cookies + HSTS |
-| `SESSION_SECRET` | ≥ 32 chars, signs the session cookie. `openssl rand -base64 48` |
-| `ENCRYPTION_KEY` | 32 bytes (64 hex chars or base64), encrypts tokens at rest. `openssl rand -hex 32` |
+| `APP_URL` | **required.** Public URL, no trailing slash. Used for cookies (`https` ⇒ `Secure` + HSTS), CSRF and the WebSocket origin check |
+| `SESSION_SECRET` | **required.** ≥ 32 chars. `openssl rand -base64 48` |
+| `ENCRYPTION_KEY` | **required.** 32 bytes (64 hex or base64). `openssl rand -hex 32` |
+| `ALLOWED_USER_IDS` | recommended: comma-separated Slack user ids allowed to sign in (find yours: profile → ⋯ → Copy member ID) |
+| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET` | optional: OAuth + Events API |
 | `PORT` (3000), `DATA_DIR` (`./data`) | optional |
-| `SLACK_EVENTS` | `auto` (default): poll the open conversation every 5s until a verified Events API delivery arrives; `on`: never poll; `off`: always poll |
 
-Copy `.env.example` to `.env` and fill it in. Losing `ENCRYPTION_KEY` just means everyone must sign in again.
+Copy `.env.example` to `.env`.
 
-## 3. Local development
+## Local development
 
 ```bash
 npm install
-cp .env.example .env        # APP_URL=http://localhost:5173 for dev, then fill the rest
-npm run dev                 # API on :3000, Vite on :5173 (proxies /api and /auth)
+cp .env.example .env        # APP_URL=http://localhost:5173
+npm run dev                 # API on :3000, Vite on :5173 (proxies /api incl. the WebSocket, and /auth)
 ```
 
-For local dev set `APP_URL=http://localhost:5173` and add `http://localhost:5173/auth/callback` as an extra redirect URL in the Slack app (Slack allows `http://localhost` redirects). The browser talks only to Vite, which proxies to the API, so cookies stay same-origin.
+Open <http://localhost:5173>. Browser-session sign-in needs no tunnel: the server connects out to Slack. For the OAuth route add `http://localhost:5173/auth/callback` as a redirect URL, and tunnel the API for the Events API (`cloudflared tunnel --url http://localhost:3000`, then use `https://<tunnel>/slack/events` as the request URL).
 
-**Events API locally.** Slack must reach `/slack/events` over public HTTPS, so tunnel the API port:
-
-```bash
-cloudflared tunnel --url http://localhost:3000      # or: ngrok http 3000
-```
-
-Put `https://<tunnel-host>/slack/events` as the Event Subscriptions request URL (keep `APP_URL` on localhost for the browser). Without events, Sleck simply polls.
-
-## 4. Deploy with Docker (behind Traefik)
+## Deploy with Docker (behind Traefik)
 
 ```bash
-cp .env.example .env     # fill in; set APP_URL and SLECK_HOST
+cp .env.example .env     # set APP_URL, SLECK_HOST, SESSION_SECRET, ENCRYPTION_KEY, ALLOWED_USER_IDS
 docker compose up -d --build
 ```
 
-`docker-compose.yml` expects an external Docker network named `traefik`, an entrypoint `websecure` and a cert resolver `letsencrypt`; edit the labels to match your Traefik. The container is non-root, read-only, drops all capabilities, and keeps SQLite in the `sleck-data` volume. **Don't attach Traefik's compression middleware** to this router: it buffers Server-Sent Events.
+`docker-compose.yml` expects an external network `traefik`, entrypoint `websecure` and resolver `letsencrypt`; adjust the labels. The container is non-root, read-only, no capabilities, SQLite in the `sleck-data` volume. WebSockets pass through Traefik by default; **don't attach a compression middleware** to this router.
 
-## 5. Features and keyboard
+## How realtime works (no polling)
 
-Sidebar (pinned / channels / private / group DMs / DMs, unread + mention badges, per-conversation pin & mute, "unread only"), message history with infinite scroll, day separators and a "New" divider, mrkdwn / mentions / custom emoji / link unfurls / files / image lightbox, composer with `:emoji:`, `@mention`, `#channel` autocomplete, emoji picker, paste & drag-drop uploads, threads (with "also send to channel"), reactions (with who-reacted tooltips), edit / delete / copy link / mark unread / pin, search with "open in context", real time via Events API → SSE with polling fallback, responsive layout with a drawer on phones. Press `?` in the app for all shortcuts; the main ones: `Ctrl/⌘ K` switcher, `Alt ↑/↓` prev/next conversation (`Alt Shift ↑/↓` for unread), `u` next unread, `i` composer, `/` search, `Shift Esc` mark read, `↑` in an empty composer edits your last message.
-
-Design notes: Geist tokens as CSS variables (`web/src/index.css`). Mono is used for **places and identifiers** (channel names, handles, timestamps, counts, code); people's names are sans, so a `#channel` and a person never look alike. Unread = bold name + count box; mention = inverted `@N` box; selected = bar + fill + `aria-current`; muted = italic + bell-off icon; own messages = left rule + `YOU` tag; pending = dimmed + "sending…"; failed = red rule + alert icon + Retry/Discard text; edited = "(edited)". The tertiary text colour is `#8f8f8f` rather than `#707070`, which measures only 4.2:1 on black (and less on hover fills), below WCAG AA. Slack's tokens are not exposed on Geist's colour page (only variable names), so the scale mirrors the Geist dark values from memory plus your palette.
-
-## 6. Testing
-
-```bash
-npm run lint && npm run typecheck && npm test      # unit tests: mrkdwn parser, composer escaping, signature check
-npm run build
-scripts/test-stack.sh events      # mock Slack on :4010 + the app on :3000 (`polling` = Events API off)
-node scripts/e2e.mjs              # Playwright (global install); 31 checks, set MODE=polling for the polling run
-node scripts/a11y.mjs             # axe-core WCAG 2 A/AA over the main views
+```
+Slack ──RTM websocket──▶ server ──/api/ws WebSocket──▶ browser     (browser session)
+Slack ──Events API POST──▶ server ──/api/ws WebSocket──▶ browser    (OAuth app)
+browser ──{op:"send"} over /api/ws──▶ server ──chat.postMessage──▶ Slack, acked back over the socket
 ```
 
-`scripts/mock-slack.ts` fakes OAuth, the Web API calls Sleck uses and signed Events API deliveries. It is not Slack; see "Not tested" below.
+- Incoming messages, reactions, edits, deletes, read-state changes and conversation changes arrive as events. There is **no HTTP polling anywhere**.
+- Sending goes over the WebSocket (acked, with pending/failed states); plain HTTP is only a fallback while the socket is down. Slack itself is called with `chat.postMessage`, because that is the reliable path for threads and `reply_broadcast`.
+- Both legs reconnect with backoff, heartbeat dead links, and **resync** what you're looking at after any gap (reconnect, upstream drop, waking the tab).
+- The banner/profile menu only talk when something is wrong (`Reconnecting…`, `Slack connection lost`, `No live updates` for OAuth without Events API).
 
-## 7. Security notes
+## Features and keyboard
 
-- **Token never reaches the browser.** It is encrypted with AES-256-GCM (key from env, ciphertext bound to the session row via AAD) and decrypted only per request. The cookie holds an opaque random session id, signed with `SESSION_SECRET`, `HttpOnly`, `Secure` (https), `SameSite=Lax`; the DB stores only its SHA-256. One live session per (team, user); 30-day sliding expiry.
-- **OAuth:** random single-use `state`, additionally bound to the browser by a signed `HttpOnly` cookie (login-CSRF protection). Slack's OAuth v2 does not support PKCE, so the state binding is the equivalent check. `/auth/logout` can also call `auth.revoke` ("Sign out and revoke token").
-- **CSRF:** every state-changing route requires a same-origin `Origin`/`Referer` **and** a per-session `X-CSRF-Token` header (plus `SameSite=Lax`).
-- **Events:** `/slack/events` verifies `X-Slack-Signature` (HMAC-SHA256, timing-safe) and rejects timestamps older than 5 minutes; deliveries are de-duplicated by `event_id`.
-- **CSP:** `default-src 'none'`; scripts and styles self-only (styles via per-response nonce); `frame-ancestors 'none'`; `form-action 'self'`; `object-src 'none'`. One deliberate looseness: `img-src … https:` so link-unfurl images (arbitrary hosts) render; they load with `referrerpolicy=no-referrer`. Slack-hosted files go through `/api/file`, an authenticated proxy restricted to Slack file hosts that re-validates every redirect hop, forces non-media types to download, and serves with `nosniff` and a sandboxing CSP. Plus HSTS, `X-Frame-Options`, `Referrer-Policy`.
-- **Least data:** only `team_id`, `user_id`, the encrypted token, granted scopes, a CSRF secret and UI prefs (pins/mutes/collapsed sections) are stored. Messages are never persisted; caches (users, emoji, conversations) are in memory. Tokens and cookies are never logged or put in URLs.
-- **Input validation:** channel ids, timestamps, emoji names and text length are validated server-side; only an allow-list of Slack methods is reachable.
-- Pins, mutes and "unread only" are **Sleck-only** preferences. Slack has no API for sidebar sections or mute state.
+Slack-style shell: top bar with back/forward and workspace search, left rail (Home, DMs, Activity, **+**, your profile with presence dot bottom-left), sidebar with Slack's own sections (browser session) or ours (pinned / channels / private / group DMs / DMs), unread + mention badges, per-conversation pin and mute, history with infinite scroll and a "New" divider, mrkdwn / mentions / custom emoji / link unfurls / files / lightbox, composer with `:emoji:`, `@mention`, `#channel` autocomplete, picker, paste & drag-drop upload, threads (+ "also send to channel"), reactions (+ who reacted, quick reactions), edit / delete / copy link / mark unread / pin, search through Slack's `search.messages` with open-in-context, quick switcher, phone layout (drawer, tabs, tap a message for its actions). `?` shows all shortcuts: `Ctrl/⌘ K`, `Alt ↑/↓`, `u`, `i`, `/`, `Shift Esc`, `↑` to edit your last message.
 
-## 8. Known limitations
+Design: Geist colour tokens and alpha grays (`web/src/index.css`), Geist icons (`vercel-geist-icons`, an **unofficial** MIT port of Vercel's set), Geist-style Button / Badge / Tabs / Switch / Note / Skeleton / Input (`web/src/components/ui`). Mono = places and identifiers (channel names, handles, timestamps, counts, code); people's names are sans. Unread = bold + count box; mention = inverted `@N` box; **inside messages only the `@mention` chip is yellow**; selected = bar + fill + `aria-current`; muted = italic + bell-off; own messages = left rule + `YOU`; pending = dimmed + "sending…"; failed = red rule + Retry/Discard. Tertiary text is `#8f8f8f`, not `#707070` (which fails WCAG AA on hover fills).
 
-- **Unread counts are derived**, because Slack gives user tokens no unread endpoint: Sleck reads `last_read` (`conversations.info`) and the newest message (`conversations.history`) per conversation in a low-priority background queue, then keeps counts live from Events API messages. With hundreds of conversations the initial fill takes a few minutes (it respects rate limits). In polling mode, badges for *other* conversations refresh only when you open them or reload.
-- Closed DMs may still appear (Slack's API doesn't say which DMs are open); the DM list shows the 20 most recently active first.
-- Rendering uses the message `text` (mrkdwn); `rich_text`/Block Kit is only rendered as a fallback when `text` is empty, so complex bot layouts are simplified.
-- Emoji skin-tone picking, drafts persistence across reloads, huddles/calls, canvases, workflows and multi-workspace switching are not implemented.
-- The Events API request URL and `user_events` in the manifest could not be validated against a live Slack workspace from the build environment.
+## Testing
+
+```bash
+npm run lint && npm run typecheck && npm test         # 16 unit tests
+npm run build
+scripts/test-stack.sh web   && MODE=web   node scripts/e2e.mjs   # browser-session mode + RTM (42 checks)
+scripts/test-stack.sh oauth && MODE=oauth node scripts/e2e.mjs   # OAuth + Events API        (39 checks)
+node scripts/a11y.mjs                                            # axe-core, WCAG 2 A/AA
+node scripts/screenshots.mjs                                     # regenerates docs/screenshots
+scripts/dev-check.sh                                             # `npm run dev` incl. WebSocket through Vite
+```
+
+`scripts/mock-slack.ts` fakes OAuth, the Web API calls Sleck uses (including `client.counts`, sections, `rtm.connect`) and a realtime socket. It is **not Slack**. Playwright e2e uses the global Playwright; if your local one wants other browser builds set `PW_EXE=/path/to/chromium`.
+
+## Security notes
+
+- **Credentials never reach the browser.** OAuth tokens and browser-session credentials (token + `d` cookie) are encrypted with AES-256-GCM (key from env, ciphertext bound to the session row) and decrypted per request. The cookie is an opaque random id, signed, `HttpOnly`, `Secure` (https), `SameSite=Lax`; the DB stores only its SHA-256. One live session per user; 30-day sliding expiry.
+- **Import endpoint** (`/auth/import`): the blob is validated (token/cookie shape, host must be `*.slack.com`) and **verified against Slack** (`auth.test`) before anything is stored; rate limited; browsers must be same-origin; `ALLOWED_USER_IDS` is enforced. "Sign out and revoke" is offered only for OAuth: revoking an imported token would sign you out of Slack itself.
+- **WebSocket:** `/api/ws` requires the session cookie **and** an `Origin` equal to `APP_URL` (stops cross-site WebSocket hijacking); payloads are size-limited and validated.
+- **OAuth:** random single-use `state` also bound to the browser by a signed cookie (Slack OAuth has no PKCE, so this is the equivalent check).
+- **CSRF:** state-changing HTTP routes need same-origin `Origin`/`Referer` **and** a per-session `X-CSRF-Token`.
+- **Events:** `/slack/events` verifies `X-Slack-Signature` (HMAC-SHA256, timing-safe) and a 5-minute timestamp window; de-duplicated by `event_id`.
+- **CSP:** `default-src 'none'`; scripts/styles self-only (styles via per-response nonce), `connect-src` self + the same-origin `ws:`; `frame-ancestors 'none'`. One looseness: `img-src … https:` so unfurl images render. Slack-hosted files go through an authenticated proxy restricted to Slack file hosts, re-validating every redirect.
+- **Least data:** only ids, encrypted credentials, scopes, a CSRF secret and UI prefs are stored. Messages are never persisted. No credentials in logs or URLs (the upstream socket URL contains a token, so socket errors are deliberately not logged).
+
+## Known limitations
+
+- Nothing here has been exercised against a real Slack workspace; the undocumented API shapes (`client.counts`, channel sections, `localConfig_v2` in the grab script, the RTM event set) follow the ReDocumented catalogue and may drift.
+- Browser-session mode does **not preload the user directory** (a workspace can have 100k+ people). Names resolve on demand and `@mention` autocomplete covers people in the current conversation (first 200 members) plus anyone already seen. The quick switcher's people list is likewise limited to those known.
+- `client.counts` sometimes only says "has unreads"; those show as **new** instead of a number until you open the conversation.
+- Pins/mutes you set in Sleck are Sleck-only; in browser-session mode Slack's own mute and sections are shown read-only.
+- Rendering uses the message `text`; Block Kit / `rich_text` is a simplified fallback. No huddles, canvases, workflows, multi-workspace switching or emoji skin-tone picking.
+- A native (non-browser) desktop app is not built; see the FAQ in the PR description.

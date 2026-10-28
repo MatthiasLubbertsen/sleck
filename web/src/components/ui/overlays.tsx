@@ -53,7 +53,7 @@ export const Dropdown = ({ trigger, children, align = 'end', side = 'bottom' }: 
   <Menu.Root>
     <Menu.Trigger asChild>{trigger}</Menu.Trigger>
     <Menu.Portal>
-      <Menu.Content side={side} align={align} sideOffset={4} collisionPadding={8} className="pop z-[70] min-w-48 rounded-md border border-line-strong bg-surface p-1 text-[13px] text-ink">
+      <Menu.Content side={side} align={align} sideOffset={4} collisionPadding={8} className="pop z-[70] min-w-52 rounded-md border border-line-strong bg-surface p-1 text-[14px] text-ink">
         {children}
       </Menu.Content>
     </Menu.Portal>
@@ -68,6 +68,12 @@ export const MenuItem = ({ children, onSelect, danger, icon, hint }: { children:
     <span className="flex w-4 justify-center" aria-hidden>{icon}</span>
     <span className="flex-1">{children}</span>
     {hint && <span className="font-mono text-[11px] text-ink-3">{hint}</span>}
+  </Menu.Item>
+)
+/** Compact icon-sized item (quick reactions); still a real menu item so arrow keys and Enter work. */
+export const MenuIconItem = ({ children, onSelect, label }: { children: ReactNode; onSelect: () => void; label: string }) => (
+  <Menu.Item onSelect={onSelect} aria-label={label} className="flex size-9 cursor-pointer select-none items-center justify-center rounded-md text-lg outline-none data-[highlighted]:bg-active">
+    {children}
   </Menu.Item>
 )
 export const MenuSep = () => <Menu.Separator className="my-1 h-px bg-line" />

@@ -27,6 +27,8 @@ export interface UnreadState {
   mentions: number
   /** true once we have actually asked Slack */
   known: boolean
+  /** Slack only said "has unreads" without a count (client.counts) */
+  approx?: boolean
 }
 
 export interface UserLite {
@@ -60,21 +62,38 @@ export interface Me {
   team: TeamLite
   csrf: string
   scopes: string[]
+  kind: 'oauth' | 'web'
 }
+
+/** Slack's own sidebar sections (web sessions only). */
+export interface Section {
+  id: string
+  name: string
+  type: string
+  channelIds: string[]
+}
+
+export type LiveState = 'connected' | 'connecting' | 'down' | 'none'
 
 export interface Bootstrap {
   me: Me
   conversations: Conversation[]
   unread: Record<string, UnreadState>
   prefs: Prefs
-  /** whether Events API deliveries have been seen, i.e. polling is not needed */
-  realtime: boolean
+  sections?: Section[]
+  /** mute state as Slack has it (read only) */
+  slackMuted?: string[]
+  live: LiveState
 }
 
 export type StreamEvent =
   /** sent on every (re)connect; `unread` is a full snapshot so nothing emitted before we connected is lost */
-  | { type: 'hello'; realtime: boolean; unread: Record<string, UnreadState> }
+  | { type: 'hello'; live: LiveState; unread: Record<string, UnreadState> }
+  | { type: 'live'; live: LiveState }
   | { type: 'slack'; event: any }
   | { type: 'unread'; channel: string; state: UnreadState }
   | { type: 'conversations' }
+  /** upstream reconnected: refetch what you are looking at */
+  | { type: 'resync' }
   | { type: 'revoked' }
+  | { type: 'ack'; id: string; ok: boolean; error?: string; ts?: string; message?: any }

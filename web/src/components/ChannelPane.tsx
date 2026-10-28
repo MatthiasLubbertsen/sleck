@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Menu, Pin, Search, Users } from 'lucide-react'
+import { Menu, Pin, Search, Users } from '@/components/icons'
+import { StatusDot } from './ui/geist'
 import { useStore } from '@/lib/store'
 import { api } from '@/lib/api'
 import { ChannelIcon, useConvLabel } from './ChannelIcon'
@@ -9,7 +10,7 @@ import { MessageList } from './MessageList'
 import { Mrkdwn } from './Mrkdwn'
 import { Button } from './ui/button'
 import { Pop, Tip } from './ui/overlays'
-import { Upload } from 'lucide-react'
+import { Upload } from '@/components/icons'
 
 function Presence({ userId }: { userId: string }) {
   const [p, setP] = useState<'active' | 'away' | null>(null)
@@ -23,8 +24,8 @@ function Presence({ userId }: { userId: string }) {
   }, [userId])
   if (!p) return null
   return (
-    <span className="flex items-center gap-1 font-mono text-[11px] text-ink-2">
-      <span aria-hidden className={p === 'active' ? 'inline-block size-2 rounded-full bg-ok' : 'inline-block size-2 rounded-full border border-ink-3'} />
+    <span className="flex items-center gap-1.5 font-mono text-[11px] text-ink-2">
+      <StatusDot active={p === 'active'} />
       {p === 'active' ? 'active' : 'away'}
     </span>
   )
@@ -36,7 +37,7 @@ function Pins({ channel }: { channel: string }) {
     <Pop
       side="bottom"
       className="max-h-96 w-[min(92vw,420px)] overflow-y-auto"
-      trigger={<Tip label="Pinned messages"><Button variant="ghost" size="iconLg" aria-label="Pinned messages" onClick={() => { setItems(null); void api.pins(channel).then((r) => setItems(r.items)).catch(() => setItems([])) }}><Pin className="size-4" aria-hidden /></Button></Tip>}
+      trigger={<Tip label="Pinned messages"><Button variant="ghost" size="touch" aria-label="Pinned messages" onClick={() => { setItems(null); void api.pins(channel).then((r) => setItems(r.items)).catch(() => setItems([])) }}><Pin className="size-4" aria-hidden /></Button></Tip>}
     >
       <div className="p-3">
         <h3 className="mb-2 text-sm font-semibold">Pinned</h3>
@@ -81,18 +82,18 @@ export function ChannelPane({ channelId }: { channelId: string }) {
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => { e.preventDefault(); dragDepth.current = 0; setDrag(false); composer.current?.addFiles([...e.dataTransfer.files]) }}
     >
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3 md:px-4">
-        <Button variant="ghost" size="iconLg" className="md:hidden" aria-label="Open conversations" onClick={() => set({ drawer: true })}><Menu className="size-5" aria-hidden /></Button>
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3 pt-[env(safe-area-inset-top)] md:px-4 md:pt-0">
+        <Button variant="ghost" size="touch" className="-ml-1 md:hidden" aria-label="Open conversations" onClick={() => set({ drawer: true })}><Menu className="size-5" aria-hidden /></Button>
         <ChannelIcon conv={conv} className="size-[18px]" />
-        <h1 className={`min-w-0 truncate text-[15px] font-semibold ${isPlace ? 'font-mono' : ''}`}>{name}</h1>
+        <h1 className={`min-w-0 truncate text-[16px] font-semibold ${isPlace ? 'font-mono text-[15px]' : ''}`}>{name}</h1>
         {conv.isExtShared && conv.sharedTeamIds.filter((t) => t !== conv.contextTeamId).slice(0, 3).map((t) => <TeamBadge key={t} teamId={t} size={16} />)}
         {conv.type === 'dm' && conv.user && <Presence userId={conv.user} />}
         {conv.isArchived && <span className="rounded-sm border border-line-strong px-1 font-mono text-[10px] uppercase text-ink-2">archived</span>}
         {conv.topic && <p className="ml-2 hidden min-w-0 flex-1 truncate text-[13px] text-ink-3 lg:block" title={conv.topic}>{conv.topic}</p>}
         <div className="ml-auto flex items-center gap-0.5">
-          {conv.numMembers !== undefined && isPlace && <span className="mr-1 hidden items-center gap-1 font-mono text-xs text-ink-2 sm:flex" aria-label={`${conv.numMembers} members`}><Users className="size-3.5" aria-hidden />{conv.numMembers}</span>}
+          {conv.numMembers !== undefined && isPlace && <span className="mr-1 hidden h-8 items-center gap-1.5 rounded-md border border-line-strong px-2.5 font-mono text-[13px] text-ink-2 sm:flex" role="img" aria-label={`${conv.numMembers} members`}><Users className="size-4" aria-hidden />{conv.numMembers}</span>}
           <Pins channel={channelId} />
-          <Tip label="Search (/)"><Button variant="ghost" size="iconLg" aria-label="Search" onClick={() => set({ searchOpen: true })}><Search className="size-4" aria-hidden /></Button></Tip>
+          <Tip label="Search (/)"><Button variant="ghost" size="touch" className="md:hidden" aria-label="Search" onClick={() => set({ searchOpen: true })}><Search className="size-4" aria-hidden /></Button></Tip>
         </div>
       </header>
 

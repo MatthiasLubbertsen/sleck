@@ -36,16 +36,22 @@
   --ds-green-700: #46a758;
   --ds-green-900: #62c073;
 
+  /* Geist alpha grays (white at increasing opacity) drive borders and hover fills */
+  --ds-gray-alpha-100: rgba(255, 255, 255, 0.05);
+  --ds-gray-alpha-200: rgba(255, 255, 255, 0.08);
+  --ds-gray-alpha-300: rgba(255, 255, 255, 0.12);
+  --ds-gray-alpha-400: rgba(255, 255, 255, 0.17);
+
   --background: var(--ds-background-100);
   --surface: var(--ds-background-200);
   --surface-2: var(--ds-gray-100);
-  --line: #1f1f1f;
-  --line-strong: #333333;
+  --line: var(--ds-gray-alpha-200);
+  --line-strong: var(--ds-gray-alpha-400);
   --ink: var(--ds-gray-1000);
   --ink-2: var(--ds-gray-900);
   --ink-3: var(--ds-gray-800);
-  --hover: rgba(255, 255, 255, 0.05);
-  --active: rgba(255, 255, 255, 0.1);
+  --hover: var(--ds-gray-alpha-100);
+  --active: var(--ds-gray-alpha-300);
   --link: var(--ds-blue-900);
   --focus: var(--ds-blue-900);
   --danger: var(--ds-red-900);

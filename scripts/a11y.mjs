@@ -7,7 +7,7 @@ const { chromium } = require('playwright')
 const axeSource = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8')
 
 const APP = process.env.APP_URL ?? 'http://localhost:3000'
-const browser = await chromium.launch()
+const browser = await chromium.launch({ executablePath: process.env.PW_EXE || undefined })
 const page = await (await browser.newContext({ viewport: { width: 1360, height: 860 }, bypassCSP: true })).newPage()
 await page.goto(APP)
 let total = 0

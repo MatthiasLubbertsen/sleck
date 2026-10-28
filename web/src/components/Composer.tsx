@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { Paperclip, SendHorizontal, Smile, X } from 'lucide-react'
+import { Paperclip, SendHorizontal, Smile, X } from '@/components/icons'
 import { useStore } from '@/lib/store'
 import { toSlackText, type Token } from '@/lib/compose'
 import { searchEmoji } from '@/lib/emoji'
@@ -8,6 +8,7 @@ import { Avatar } from './Avatar'
 import { Emoji } from './Emoji'
 import { EmojiPicker } from './EmojiPicker'
 import { Button } from './ui/button'
+import { Switch } from './ui/geist'
 import { Tip } from './ui/overlays'
 import { cn } from '@/lib/utils'
 import { fmtBytes } from '@/lib/time'
@@ -180,7 +181,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ ch
   }
 
   return (
-    <div className="relative px-4 pb-4 pt-1 max-md:px-3">
+    <div className="relative px-4 pb-4 pt-1 max-md:px-3 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {suggest && (
         <ul role="listbox" aria-label="Suggestions" className="pop absolute inset-x-4 bottom-full z-30 mb-1 max-h-64 overflow-y-auto rounded-md border border-line-strong bg-surface p-1 max-md:inset-x-3">
           {suggest.items.map((it, i) => (
@@ -234,21 +235,21 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ ch
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           onBlur={() => setTimeout(() => setSuggest(null), 100)}
-          className="block max-h-[40vh] w-full resize-none bg-transparent px-3 pb-1 pt-2.5 text-sm leading-relaxed outline-none placeholder:text-ink-3"
+          className="block max-h-[40vh] w-full resize-none bg-transparent px-3 pb-1 pt-2.5 text-[16px] leading-relaxed outline-none placeholder:text-ink-3 md:text-[14px]"
         />
         <div className="flex flex-wrap items-center gap-1 px-1.5 pb-1.5">
-          <Tip label="Attach files"><Button variant="ghost" size="icon" aria-label="Attach files" onClick={() => fileInput.current?.click()}><Paperclip className="size-4" aria-hidden /></Button></Tip>
+          <Tip label="Attach files"><Button variant="ghost" size="touch" aria-label="Attach files" onClick={() => fileInput.current?.click()}><Paperclip className="size-4" aria-hidden /></Button></Tip>
           <input ref={fileInput} type="file" multiple hidden onChange={(e) => { addFiles([...(e.target.files ?? [])]); e.target.value = '' }} />
-          <EmojiPicker onPick={insertEmoji} trigger={<Button variant="ghost" size="icon" aria-label="Insert emoji"><Smile className="size-4" aria-hidden /></Button>} />
+          <EmojiPicker onPick={insertEmoji} trigger={<Button variant="ghost" size="touch" aria-label="Insert emoji"><Smile className="size-4" aria-hidden /></Button>} />
           {threadTs && conv && (
-            <label className="ml-1 flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-xs text-ink-2">
-              <input type="checkbox" checked={broadcast} onChange={(e) => setBroadcast(e.target.checked)} className="size-3.5 accent-white" />
-              Also send to <span className="font-mono">{conv.type === 'public' || conv.type === 'private' ? `#${conv.name}` : 'conversation'}</span>
-            </label>
+            <div className="ml-1 flex items-center gap-2 whitespace-nowrap text-xs text-ink-2">
+              <Switch checked={broadcast} onChange={setBroadcast} label={`Also send to ${conv.type === 'public' || conv.type === 'private' ? '#' + conv.name : 'the conversation'}`} />
+              <span aria-hidden>Also send to <span className="font-mono">{conv.type === 'public' || conv.type === 'private' ? `#${conv.name}` : 'conversation'}</span></span>
+            </div>
           )}
           {!threadTs && <span className="ml-auto mr-1 hidden font-mono text-[11px] text-ink-3 sm:inline">Enter send · Shift+Enter newline</span>}
           <Tip label="Send (Enter)">
-            <Button variant="default" size="icon" className="ml-auto" aria-label="Send message" disabled={!text.trim() && !files.length} onClick={submit}><SendHorizontal className="size-4" aria-hidden /></Button>
+            <Button variant="default" size="touch" className="ml-auto" aria-label="Send message" disabled={!text.trim() && !files.length} onClick={submit}><SendHorizontal className="size-4" aria-hidden /></Button>
           </Tip>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Search } from 'lucide-react'
+import { Search } from '@/components/icons'
 import { allEmoji, GROUPS, loadEmoji, searchEmoji, type EmojiHit } from '@/lib/emoji'
 import { useStore } from '@/lib/store'
 import { Pop } from './ui/overlays'

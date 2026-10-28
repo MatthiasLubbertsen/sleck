@@ -1,4 +1,4 @@
-import { cached, invalidate, slack, slackAll, SlackError, AUTH_ERRORS, type Ctx } from './slack'
+import { cached, invalidate, peek, slack, slackAll, SlackError, AUTH_ERRORS, type Ctx } from './slack'
 import { hub } from './hub'
 import type { Conversation, UnreadState } from '../shared/types'
 
@@ -156,3 +156,53 @@ export async function markRead(ctx: Ctx, channel: string, ts: string) {
     await refresh(ctx, channel, 'high')
   }
 }
+
+// ---- web sessions: Slack's own counters ---------------------------------------------------------------
+
+/**
+ * `client.counts` (what the web client uses) returns last_read / latest / mention counts for every
+ * conversation in one call. When it only says `has_unreads`, the count is approximate.
+ */
+export async function loadCounts(ctx: Ctx): Promise<boolean> {
+  const r = await slack(ctx, 'client.counts', { thread_counts_by_channel: true, org_wide_aware: true, include_file_channels: false })
+  const map = stateMap(ctx.key)
+  const per: Record<string, unknown> = r.unread_count_by_channel ?? {}
+  const mentionBy: Record<string, unknown> = r.mention_count_by_channel ?? {}
+  let n = 0
+  for (const e of [...(r.channels ?? []), ...(r.mpims ?? []), ...(r.ims ?? [])]) {
+    if (!e?.id) continue
+    const exact = typeof per[e.id] === 'number'
+    const count = exact ? (per[e.id] as number) : e.has_unreads ? 1 : 0
+    const mentions = Number(e.mention_count ?? mentionBy[e.id] ?? 0) || 0
+    const st: UnreadState = {
+      lastRead: String(e.last_read ?? '0'),
+      latestTs: String(e.latest ?? '0'),
+      unread: Math.max(count, mentions),
+      mentions,
+      known: true,
+      approx: !exact && count > 0,
+    }
+    map.set(e.id, st)
+    n++
+  }
+  return n > 0
+}
+
+/** RTM `channel_marked` / `im_marked` / `group_marked`: read state changed (maybe on another device). */
+export function applyMarked(team: string, me: string, ev: any) {
+  const map = states.get(`${team}:${me}`)
+  if (!map || !ev.channel) return
+  const prev = map.get(ev.channel) ?? empty()
+  const next: UnreadState = {
+    ...prev,
+    lastRead: ev.ts ?? prev.lastRead,
+    unread: Number(ev.unread_count_display ?? ev.unread_count ?? 0) || 0,
+    mentions: Number(ev.mention_count_display ?? ev.mention_count ?? 0) || 0,
+    known: true,
+    approx: false,
+  }
+  map.set(ev.channel, next)
+  hub.publish(team, me, { type: 'unread', channel: ev.channel, state: next })
+}
+
+export const cachedConversations = (key: string) => peek<Conversation[]>(`${key}:convs`)

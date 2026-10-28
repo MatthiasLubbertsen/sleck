@@ -6,14 +6,19 @@
 import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
 import { createHmac } from 'node:crypto'
+import { WebSocketServer, type WebSocket } from 'ws'
 
 const PORT = Number(process.env.MOCK_PORT ?? 4010)
 const APP = process.env.APP_URL ?? 'http://localhost:3000'
 const SIGNING = process.env.SLACK_SIGNING_SECRET ?? 'mock-signing-secret'
-const EVENTS = process.env.MOCK_EVENTS !== '0'
+// where live events go: the Events API (OAuth install), the RTM socket (web session), or nowhere
+const PUSH = (process.env.MOCK_PUSH ?? (process.env.MOCK_EVENTS === '0' ? 'none' : 'events')) as 'events' | 'rtm' | 'none'
 const ME = 'U0000001'
 const TEAM = 'T0000001'
 const TOKEN = 'xoxp-mock-token'
+const WEB_TOKEN = 'xoxc-1234567890-mock-web-token-abcdef'
+const WEB_COOKIE = 'xoxd-mockcookievalue0123456789abcdef%2Bxyz'
+const rtmClients = new Set<WebSocket>()
 
 const svg = (c: string, t: string) => `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72"><rect width="72" height="72" fill="${c}"/><text x="36" y="48" font-size="34" text-anchor="middle" fill="#fff" font-family="sans-serif">${t}</text></svg>`)}`
 const user = (id: string, name: string, real: string, c: string, extra: any = {}) => ({
@@ -64,7 +69,11 @@ lastRead['D0000001'] = '0'
 for (const c of ['C0000003', 'G0000001', 'D0000002', 'M0000001']) lastRead[c] = msgs[c]?.at(-1)?.ts ?? '0'
 
 async function fire(event: any) {
-  if (!EVENTS) return
+  if (PUSH === 'rtm') {
+    for (const ws of rtmClients) ws.send(JSON.stringify(event))
+    return
+  }
+  if (PUSH !== 'events') return
   const body = JSON.stringify({ type: 'event_callback', team_id: TEAM, event_id: 'Ev' + Math.random().toString(36).slice(2), event, authorizations: [{ team_id: TEAM, user_id: ME, is_bot: false }] })
   const ts = String(Math.floor(Date.now() / 1000))
   const sig = 'v0=' + createHmac('sha256', SIGNING).update(`v0:${ts}:${body}`).digest('hex')
@@ -82,6 +91,11 @@ app.get('/oauth/v2/authorize', (c) => {
   u.searchParams.set('state', q.state)
   return c.redirect(u.toString())
 })
+// stand-in for app.slack.com/client/<team>: sets the d cookie and the web client's localConfig_v2
+app.get('/client/:team', (c) =>
+  c.html(`<!doctype html><title>Mock Slack</title><script>localStorage.setItem('localConfig_v2', JSON.stringify({ teams: { ${TEAM}: { token: '${WEB_TOKEN}', url: 'https://mock.slack.com/', name: 'Mock Workspace', domain: 'mock' } } }))</script><p>signed in</p>`, 200, {
+    'set-cookie': `d=${WEB_COOKIE}; Path=/; HttpOnly`,
+  }))
 app.get('/files/:name', (c) => c.body(new Uint8Array([137, 80, 78, 71]), 200, { 'content-type': 'image/png' }))
 app.post('/upload/:id', async (c) => (c.req.param('id') && (await c.req.arrayBuffer()), c.text('OK')))
 
@@ -91,6 +105,10 @@ app.post('/__inject', async (c) => {
   const m = mk(channel, u, text, thread_ts ? { thread_ts } : {})
   await fire({ type: 'message', channel, user: u, text, ts: m.ts, ...(thread_ts ? { thread_ts } : {}), channel_type: channel[0] === 'D' ? 'im' : 'channel' })
   return c.json({ ts: m.ts })
+})
+app.post('/__rtm-drop', (c) => {
+  for (const ws of rtmClients) ws.terminate()
+  return c.json({ dropped: rtmClients.size })
 })
 app.post('/__rate-limit', async (c) => (rateLimited.set((await c.req.json()).method, 1), c.json({ ok: true })))
 app.post('/__revoke', (c) => ((revoked = true), c.json({ ok: true })))
@@ -103,7 +121,9 @@ app.post('/api/:method', async (c) => {
     revoked = false
     return p.code === 'mock-code' && p.client_secret ? c.json({ ok: true, authed_user: { id: ME, access_token: TOKEN, scope: 'channels:read', token_type: 'user' }, team: { id: TEAM, name: 'Mock Workspace' } }) : c.json({ ok: false, error: 'invalid_code' })
   }
-  if (revoked || c.req.header('authorization') !== `Bearer ${TOKEN}`) return c.json({ ok: false, error: revoked ? 'token_revoked' : 'invalid_auth' })
+  const bearer = c.req.header('authorization') === `Bearer ${TOKEN}`
+  const web = p.token === WEB_TOKEN && (c.req.header('cookie') ?? '').includes(`d=${WEB_COOKIE}`)
+  if (revoked || !(bearer || web)) return c.json({ ok: false, error: revoked ? 'token_revoked' : 'invalid_auth' })
   if (rateLimited.has(method)) {
     rateLimited.delete(method)
     return c.json({ ok: false, error: 'ratelimited' }, 429, { 'Retry-After': '1' })
@@ -112,6 +132,23 @@ app.post('/api/:method', async (c) => {
   const err = (e: string) => c.json({ ok: false, error: e })
   const chan = p.channel
   switch (method) {
+    case 'rtm.connect': return ok({ url: `ws://localhost:${PORT}/rtm`, self: { id: ME }, team: { id: TEAM } })
+    case 'client.counts': {
+      const entry = (ch: any) => {
+        const last = lastRead[ch.id] ?? '0'
+        const newer = (msgs[ch.id] ?? []).filter((m) => Number(m.ts) > Number(last) && m.user !== ME && !m.thread_ts)
+        return { id: ch.id, last_read: last, latest: msgs[ch.id]?.at(-1)?.ts ?? '0', has_unreads: newer.length > 0, mention_count: newer.filter((m) => ch.is_im || (m.text ?? '').includes(`<@${ME}>`)).length }
+      }
+      return ok({ channels: channels.filter((x) => x.is_channel || x.is_group).map(entry), mpims: channels.filter((x) => x.is_mpim).map(entry), ims: channels.filter((x) => x.is_im).map(entry) })
+    }
+    case 'users.channelSections.list': return ok({ channel_sections: [
+      { channel_section_id: 'L2', name: 'Channels', type: 'channels', next_channel_section_id: 'L3', channel_ids_page: { channel_ids: ['C0000001', 'C0000002', 'C0000003'] } },
+      { channel_section_id: 'L1', name: 'Starred', type: 'stars', next_channel_section_id: 'L2', channel_ids_page: { channel_ids: ['D0000001'] } },
+      { channel_section_id: 'L3', name: 'Projects', type: 'standard', next_channel_section_id: 'L4', channel_ids_page: { channel_ids: ['G0000001'] } },
+      { channel_section_id: 'L4', name: 'Direct messages', type: 'direct_messages', next_channel_section_id: null, channel_ids_page: { channel_ids: ['D0000002', 'M0000001'] } },
+    ] })
+    case 'users.prefs.get': return ok({ prefs: { muted_channels: 'C0000003' } })
+    case 'conversations.members': return ok({ members: users.map((u) => u.id) })
     case 'auth.test': return ok({ team_id: TEAM, team: 'Mock Workspace', user_id: ME })
     case 'auth.revoke': revoked = true; return ok({ revoked: true })
     case 'team.info': return ok({ team: { id: p.team ?? TEAM, name: p.team ? 'Acme Corp' : 'Mock Workspace', domain: 'mock', icon: { image_44: svg(p.team ? '#f59e0b' : '#111', 'M') } } })
@@ -122,7 +159,7 @@ app.post('/api/:method', async (c) => {
     case 'users.conversations': return ok({ channels })
     case 'conversations.info': { const ch = channels.find((x) => x.id === chan); return ch ? ok({ channel: { ...ch, last_read: lastRead[chan] ?? '0' } }) : err('channel_not_found') }
     case 'conversations.open': return ok({ channel: { id: 'D0000002' } })
-    case 'conversations.mark': lastRead[chan] = p.ts; return ok()
+    case 'conversations.mark': lastRead[chan] = p.ts; void fire({ type: chan[0] === 'D' ? 'im_marked' : 'channel_marked', channel: chan, ts: p.ts, unread_count_display: 0, mention_count_display: 0 }); return ok()
     case 'conversations.history': case 'conversations.replies': {
       const all = (msgs[chan] ?? [])
       let list = method === 'conversations.replies' ? all.filter((m) => m.ts === p.ts || m.thread_ts === p.ts) : all.filter((m) => !m.thread_ts || m.thread_ts === m.ts || m.subtype === 'thread_broadcast')
@@ -185,4 +222,18 @@ app.post('/api/:method', async (c) => {
   }
 })
 
-serve({ fetch: app.fetch, port: PORT }, () => console.log(`mock slack on :${PORT} (events ${EVENTS ? 'on' : 'off'})`))
+const server = serve({ fetch: app.fetch, port: PORT }, () => console.log(`mock slack on :${PORT} (push: ${PUSH})`))
+const wss = new WebSocketServer({ noServer: true })
+;(server as import('node:http').Server).on('upgrade', (req, socket, head) => {
+  const authed = (req.headers.cookie ?? '').includes(`d=${WEB_COOKIE}`)
+  if (!req.url?.startsWith('/rtm') || !authed) return socket.destroy()
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    rtmClients.add(ws)
+    ws.on('close', () => rtmClients.delete(ws))
+    ws.on('message', (d) => {
+      const m = JSON.parse(d.toString())
+      if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong', reply_to: m.id }))
+    })
+    ws.send(JSON.stringify({ type: 'hello' }))
+  })
+})

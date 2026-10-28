@@ -1,12 +1,13 @@
 import { config } from './config'
-import type { StreamEvent } from '../shared/types'
+import type { LiveState, StreamEvent } from '../shared/types'
 
 type Sink = (e: StreamEvent) => void
 
-/** Fan-out of server events to the open browser tabs of a (team,user), via SSE. */
+/** Fan-out of server events to the open browser tabs of a (team,user), over WebSocket. */
 class Hub {
   private sinks = new Map<string, Set<Sink>>()
   private seen = new Set<string>()
+  private upstream = new Map<string, LiveState>()
 
   private k = (team: string, user: string) => `${team}:${user}`
 
@@ -30,17 +31,25 @@ class Hub {
     this.publish(team, user, { type: 'revoked' })
     this.sinks.delete(this.k(team, user))
     this.seen.delete(this.k(team, user))
+    this.upstream.delete(this.k(team, user))
   }
 
   markEventsSeen(team: string, user: string) {
     this.seen.add(this.k(team, user))
   }
 
-  /** Is the Events API feeding us, i.e. can the client skip polling? */
-  realtime(team: string, user: string): boolean {
-    if (config.events === 'on') return true
-    if (config.events === 'off') return false
-    return this.seen.has(this.k(team, user))
+  /** Web sessions report their RTM socket state here. */
+  setUpstream(team: string, user: string, state: LiveState) {
+    if (this.upstream.get(this.k(team, user)) === state) return
+    this.upstream.set(this.k(team, user), state)
+    this.publish(team, user, { type: 'live', live: state })
+  }
+
+  /** Is something feeding us live updates for this user? */
+  live(team: string, user: string, kind: 'oauth' | 'web'): LiveState {
+    if (kind === 'web') return this.upstream.get(this.k(team, user)) ?? 'connecting'
+    if (config.events === 'on' || this.seen.has(this.k(team, user))) return 'connected'
+    return 'none'
   }
 }
 

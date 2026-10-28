@@ -2,14 +2,14 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { compress } from 'hono/compress'
-import { streamSSE } from 'hono/streaming'
 import { config } from './config'
 import { csrf, handleError, requireSession, type Env } from './auth'
 import { getPrefs, setPrefs } from './db'
-import { cached, invalidate, slack, slackAll, SlackError } from './slack'
-import { hydrate, listConversations, markRead, refresh, snapshotUnread } from './convs'
+import { cached, invalidate, slack, slackAll, SlackError, type Ctx } from './slack'
+import { hydrate, listConversations, loadCounts, markRead, refresh, snapshotUnread } from './convs'
+import { rtm } from './rtm'
 import { hub } from './hub'
-import type { Bootstrap, Prefs, TeamLite, UserLite } from '../shared/types'
+import type { Bootstrap, Prefs, Section, TeamLite, UserLite } from '../shared/types'
 
 export const api = new Hono<Env>()
 api.use('*', requireSession, csrf)
@@ -55,6 +55,9 @@ const toUser = (u: any): UserLite => ({
 
 api.get('/users', compress(), async (c) => {
   const ctx = c.get('ctx')
+  // A web session may sit in a workspace with 100k+ people: never preload the directory there.
+  // Names are resolved on demand (/users/lookup) from what is on screen.
+  if (ctx.kind === 'web') return c.json({ users: [] as UserLite[] })
   const users = await cached(`${ctx.key}:users`, 15 * 60_000, async () => (await slackAll(ctx, 'users.list', 'members', {}, {}, 60)).map(toUser))
   return c.json({ users })
 })
@@ -113,10 +116,41 @@ api.get('/emoji', compress(), async (c) => {
 
 // ---- bootstrap -----------------------------------------------------------------------------------
 
+async function loadSections(ctx: Ctx): Promise<Section[] | undefined> {
+  try {
+    const raw: any[] = (await slack(ctx, 'users.channelSections.list')).channel_sections ?? []
+    const byId = new Map(raw.map((s) => [s.channel_section_id, s]))
+    const hasPrev = new Set(raw.map((s) => s.next_channel_section_id).filter(Boolean))
+    const ordered: any[] = []
+    const seen = new Set<string>()
+    for (const head of raw.filter((s) => !hasPrev.has(s.channel_section_id))) {
+      for (let s = head; s && !seen.has(s.channel_section_id); s = byId.get(s.next_channel_section_id)) {
+        seen.add(s.channel_section_id)
+        ordered.push(s)
+      }
+    }
+    for (const s of raw) if (!seen.has(s.channel_section_id)) ordered.push(s)
+    return ordered.map((s) => ({ id: s.channel_section_id, name: s.name ?? '', type: s.type ?? 'custom', channelIds: s.channel_ids_page?.channel_ids ?? s.channel_ids ?? [] }))
+  } catch {
+    return undefined
+  }
+}
+
+async function loadMuted(ctx: Ctx): Promise<string[] | undefined> {
+  try {
+    const p = (await slack(ctx, 'users.prefs.get')).prefs?.muted_channels
+    return typeof p === 'string' ? p.split(',').filter(Boolean) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 api.get('/bootstrap', async (c) => {
   const ctx = c.get('ctx')
   const s = c.get('session')
-  const [teamInfo, conversations] = await Promise.all([
+  const web = ctx.kind === 'web'
+  if (web) rtm.ensure(ctx)
+  const [teamInfo, conversations, sections, slackMuted] = await Promise.all([
     cached(`${ctx.key}:teaminfo`, 3600_000, async () => {
       const t = await slack(ctx, 'team.info').catch(() => null)
       if (t?.team) return toTeam(t.team)
@@ -124,17 +158,28 @@ api.get('/bootstrap', async (c) => {
       return { id: a.team_id, name: a.team } as TeamLite
     }),
     listConversations(ctx, c.req.query('refresh') === '1'),
+    web ? loadSections(ctx) : undefined,
+    web ? loadMuted(ctx) : undefined,
   ])
   const prefs = getPrefs(ctx.teamId, ctx.userId)
-  void hydrate(ctx, conversations, prefs.pinned)
+  // Web sessions get every counter in one call; official tokens have to derive them in the background.
+  const counted = web ? await loadCounts(ctx).catch(() => false) : false
+  if (!counted) void hydrate(ctx, conversations, prefs.pinned)
   const out: Bootstrap = {
-    me: { userId: ctx.userId, team: teamInfo, csrf: s.csrf, scopes: s.scopes },
+    me: { userId: ctx.userId, team: teamInfo, csrf: s.csrf, scopes: s.scopes, kind: s.kind },
     conversations,
     unread: snapshotUnread(ctx.key),
     prefs,
-    realtime: hub.realtime(ctx.teamId, ctx.userId),
+    sections,
+    slackMuted,
+    live: hub.live(ctx.teamId, ctx.userId, s.kind),
   }
   return c.json(out)
+})
+
+api.get('/members', async (c) => {
+  const r = await slack(c.get('ctx'), 'conversations.members', { channel: channelOf(c.req.query('channel')), limit: 200 })
+  return c.json({ members: (r.members ?? []) as string[] })
 })
 
 api.get('/prefs', (c) => c.json(getPrefs(c.get('ctx').teamId, c.get('ctx').userId)))
@@ -343,24 +388,4 @@ api.get('/file', async (c) => {
     if (v) headers.set(h, v)
   }
   return new Response(upstream.body, { status: upstream.status, headers })
-})
-
-// ---- realtime ---------------------------------------------------------------------------------------
-
-api.get('/stream', (c) => {
-  const { teamId, userId } = c.get('ctx')
-  c.header('X-Accel-Buffering', 'no')
-  c.header('Cache-Control', 'no-cache, no-transform')
-  return streamSSE(c, async (stream) => {
-    const unsub = hub.subscribe(teamId, userId, (e) => {
-      void stream.writeSSE({ event: 'm', data: JSON.stringify(e) }).catch(() => undefined)
-    })
-    stream.onAbort(unsub)
-    await stream.writeSSE({ event: 'm', data: JSON.stringify({ type: 'hello', realtime: hub.realtime(teamId, userId), unread: snapshotUnread(c.get('ctx').key) }) })
-    while (!stream.aborted && !stream.closed) {
-      await stream.sleep(20_000)
-      await stream.writeSSE({ event: 'ping', data: '' }).catch(() => undefined)
-    }
-    unsub()
-  })
 })

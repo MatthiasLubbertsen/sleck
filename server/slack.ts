@@ -15,6 +15,31 @@ export interface Ctx {
   token: string
   teamId: string
   userId: string
+  /** 'web' = browser-session credentials (xoxc token + `d` cookie) against the workspace host */
+  kind?: 'oauth' | 'web'
+  cookie?: string
+  host?: string
+}
+
+const WEB_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+
+export const webBase = (ctx: Ctx) => config.slackWebBase || `https://${ctx.host}`
+
+/** Slack's own client talks to `<workspace>.slack.com/api/*` with token in the body and the d cookie. */
+function request(ctx: Ctx, method: string, params: Record<string, unknown>, noAuth?: boolean): { url: string; init: RequestInit } {
+  const body = encodeParams(params)
+  const headers: Record<string, string> = { 'Content-Type': 'application/x-www-form-urlencoded' }
+  if (ctx.kind === 'web') {
+    body.set('token', ctx.token)
+    body.set('_x_mode', 'online')
+    body.set('_x_app_name', 'client')
+    headers.Cookie = `d=${ctx.cookie}`
+    headers.Origin = 'https://app.slack.com'
+    headers['User-Agent'] = WEB_UA
+    return { url: `${webBase(ctx)}/api/${method}`, init: { method: 'POST', headers, body } }
+  }
+  if (!noAuth) headers.Authorization = `Bearer ${ctx.token}`
+  return { url: `${config.slackApi}/${method}`, init: { method: 'POST', headers, body } }
 }
 
 type Priority = 'high' | 'low'
@@ -89,15 +114,8 @@ export async function slack<T = any>(ctx: Ctx, method: string, params: Record<st
     if (wait) await sleep(wait)
 
     const res = await scheduler.submit(opts.priority ?? 'high', async () => {
-      const r = await fetch(`${config.slackApi}/${method}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          ...(opts.noAuth ? {} : { Authorization: `Bearer ${ctx.token}` }),
-        },
-        body: encodeParams(params),
-        signal: AbortSignal.timeout(25_000),
-      })
+      const req = request(ctx, method, params, opts.noAuth)
+      const r = await fetch(req.url, { ...req.init, signal: AbortSignal.timeout(25_000) })
       if (r.status === 429) return { kind: 'rl', after: Number(r.headers.get('retry-after') ?? 5) } as const
       if (!r.ok) throw new SlackError(`http_${r.status}`, 502)
       return { kind: 'ok', data: (await r.json()) as any } as const
