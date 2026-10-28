@@ -8,6 +8,7 @@ RUN npm run build
 
 # --- runtime: no node_modules needed, everything is bundled ---
 FROM node:22-slim
+LABEL org.opencontainers.image.source="https://github.com/MatthiasLubbertsen/sleck"
 ENV NODE_ENV=production DATA_DIR=/data PORT=3000
 WORKDIR /app
 COPY --from=build /app/dist ./dist

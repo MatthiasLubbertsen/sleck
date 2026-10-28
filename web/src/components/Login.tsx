@@ -63,8 +63,9 @@ export function Login({ reason, error }: { reason?: 'expired' | 'error'; error?:
           <summary className="focus-inset cursor-pointer select-none rounded-md px-3 py-2.5 text-[14px] font-medium">Use a browser session (realtime socket)</summary>
           <div className="space-y-3 border-t border-line p-3">
             <p className="text-[13px] leading-5 text-ink-2">
-              Run <code className="rounded-sm border border-line-strong bg-surface-2 px-1 font-mono text-[12px]">scripts/grab-slack-session.sh</code> on your computer: it opens a browser, you sign in to Slack, and it prints a blob. Paste it here.
+              On <b>your own computer</b> (Node 22+), run this. It opens a browser, you sign in to Slack, and it prints a blob. Paste it below.
             </p>
+            <pre className="select-all overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-line-strong bg-[var(--ds-gray-alpha-100)] p-2 font-mono text-[11.5px] leading-5">{`curl -fsSL ${location.origin}/grab-slack-session.mjs -o grab.mjs && node grab.mjs`}</pre>
             <Textarea rows={4} value={blob} onChange={(e) => setBlob(e.target.value)} placeholder="Paste the session blob (or JSON)" aria-label="Session blob" className="font-mono text-[12px]" spellCheck={false} autoComplete="off" />
             <Button variant="secondary" className="w-full" loading={busy} disabled={!blob.trim() || busy} onClick={() => void submit()}>Sign in with this session</Button>
           </div>

@@ -1,8 +1,9 @@
 # Runs behind Traefik on its own subdomain (TLS terminates at Traefik), on the external `proxy` network.
 services:
   sleck:
-    build: .
-    image: sleck:latest
+    # built and pushed by GitHub Actions (.github/workflows/ci.yml)
+    image: ghcr.io/matthiaslubbertsen/sleck:latest
+    pull_policy: always
     restart: unless-stopped
     environment:
       # OAuth + Events API are optional; leave empty to run on imported browser sessions only
